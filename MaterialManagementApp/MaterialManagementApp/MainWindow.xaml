@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="MaterialManagementApp.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:MaterialManagementApp"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="物资管理系统">
+
+    <!-- 桌面亚克力毛玻璃背景：仅窗口底层与局部面板（工作台统计卡、弹窗）透出亚克力，
+         内容区为纯色底，避免全局高透明影响可读性；
+         不支持亚克力的环境（Win10 / 系统关闭透明效果）由 MainWindow.xaml.cs 降级为纯色 -->
+    <Window.SystemBackdrop>
+        <DesktopAcrylicBackdrop />
+    </Window.SystemBackdrop>
+
+    <!-- 两行布局：上方导航与内容，下方固定状态栏。
+         根 Grid 背景必须显式设为内容区底色：WinUI 窗口底层表面是白色，
+         NavigationView 内容区（ContentGrid）边框/圆角处有 1px 不被不透明像素覆盖的缝隙，
+         不铺底色时该缝隙透出白色表面，深色主题下表现为窗格右侧一条白色竖线 -->
+    <Grid Background="{ThemeResource AppContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 布局缝填充：NavigationView 模板在客户区首列、窗格与内容区交界（OpenPaneLength 处）
+             各有约 1px 不绘制区域。纯色主题下由根 Grid 背景填充；毛玻璃模式下根 Grid 透明，
+             缝隙会透出未加白纱的原始亚克力，在窗格边缘形成 1px 深色线。这里垫几个与窗格
+             底色一致的小面片填缝，垫在 NavigationView 之下，被正常绘制区域覆盖时无视觉差异。
+             坐标注意：x=0 是 1px DWM 边框，客户区从物理 x=1 开始，根 Grid 内 Margin 相对
+             客户区——物理列 240 的缝需 Margin=239（经红色垫片实验实测确认） -->
+        <!-- 左缘缝：客户区 [0,2) → 物理列 1,2（列 1 为缝，列 2 被窗格覆盖） -->
+        <Rectangle
+            Width="2"
+            HorizontalAlignment="Left"
+            Grid.RowSpan="2"
+            Fill="{ThemeResource NavigationViewExpandedPaneBackground}" />
+        <!-- 窗格/内容交界缝：Margin=239 → 客户区 [239,240) → 物理列 240 -->
+        <Rectangle
+            Width="1"
+            Margin="239,0,0,0"
+            HorizontalAlignment="Left"
+            Grid.RowSpan="2"
+            Fill="{ThemeResource NavigationViewExpandedPaneBackground}" />
+        <Rectangle
+            Width="8"
+            Height="8"
+            Margin="240,0,0,0"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Fill="{ThemeResource NavigationViewExpandedPaneBackground}" />
+
+        <NavigationView
+            x:Name="NavView"
+            Grid.Row="0"
+            PaneDisplayMode="Left"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            IsPaneToggleButtonVisible="True"
+            OpenPaneLength="240"
+            SelectionChanged="OnNavSelectionChanged"
+            ItemInvoked="OnNavItemInvoked">
+
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="工作台" Tag="dashboard" IsSelected="True">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Home" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="工作日志" Tag="worklog">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Edit" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <!-- 带二级菜单的分组项：Tag 留空且 SelectsOnInvoked=False，点击只展开/收起而不触发导航 -->
+                <NavigationViewItem Content="地材台账" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Library" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="台账明细" Tag="earth-ledger">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Page" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="渣土运输" Tag="earth-transport">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE804;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="供应商管理" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Contact" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="供应商合同" Tag="supplier-contract">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Document" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="供应商列表" Tag="supplier-list">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8FD;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="月度结算" Tag="supplier-settlement">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8C7;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="甲供物资" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Folder" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="物资申请档案" Tag="partya-apply">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Page" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="甲供物资台账" Tag="partya-ledger">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Document" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="自购物资" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Shop" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="物资申请表" Tag="self-apply">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Page" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="物资采购明细" Tag="self-purchase">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8FD;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="库存管理" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7B8;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="入库领用退库" Tag="stock-inout">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Sync" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="库存查询" Tag="stock-check">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE721;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="库存预警" Tag="stock-warning">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7BA;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="机具设备" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE90F;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="机具入场" Tag="equip-entry">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Add" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="小型机具明细" Tag="equip-small">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Document" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="工程机械" Tag="equip-machine">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE98F;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="维保与年检" Tag="equip-maintain">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Calendar" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="设备租赁" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Tag" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="设备租赁台账" Tag="rental-ledger">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Document" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+
+                <NavigationViewItem Content="物资核销" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Calculator" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem Content="月度核销" Tag="writeoff-monthly">
+                            <NavigationViewItem.Icon>
+                                <SymbolIcon Symbol="Page" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        <NavigationViewItem Content="核销台账" Tag="writeoff-ledger">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8FD;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <!-- 页脚区域即左下角：放置设置入口 -->
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="设置" Tag="settings" SelectsOnInvoked="False">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+
+            <!-- 内容区底色：纯色模式与页面背景一致；毛玻璃模式运行期被覆盖为透明，
+                 整窗透出桌面亚克力（卡片自身仍有底色保证文字对比度） -->
+            <Frame
+                x:Name="ContentFrame"
+                Background="{ThemeResource AppContentBackgroundBrush}" />
+        </NavigationView>
+
+        <!-- 状态栏：左侧数据库概览，右侧实时日期时间。
+             背景用 AppSurfaceBrush（随主题模式适配浅/深/亚克力），
+             避免半透明 Layer 刷子在亚克力关闭的深色模式下叠黑底发白 -->
+        <Border
+            Grid.Row="1"
+            Height="28"
+            Padding="12,0"
+            Background="{ThemeResource AppSurfaceBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock
+                    x:Name="StatusText"
+                    Grid.Column="0"
+                    VerticalAlignment="Center"
+                    Style="{ThemeResource CaptionTextBlockStyle}"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    x:Name="ClockText"
+                    Grid.Column="1"
+                    Margin="12,0,0,0"
+                    VerticalAlignment="Center"
+                    Style="{ThemeResource CaptionTextBlockStyle}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

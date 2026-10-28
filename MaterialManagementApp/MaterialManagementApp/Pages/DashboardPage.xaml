@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="MaterialManagementApp.Pages.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:common="using:MaterialManagementApp.Common"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <!-- 预警卡双色态：0（安全）与 &gt;0（警示）切换数字与警示线的可见性 -->
+        <common:CountToVisibilityConverter x:Key="CountToVisibility" />
+        <!-- 状态提示条：有消息时才显示容器 -->
+        <common:StringToVisibilityConverter x:Key="StringToVisibility" />
+    </Page.Resources>
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="20">
+            <TextBlock Text="工作台" Style="{ThemeResource TitleTextBlockStyle}" />
+
+            <!-- 上部：台账概况 -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="台账概况" Style="{ThemeResource SubtitleTextBlockStyle}" />
+
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 统计卡：纯数据展示，不可点击（无 Click/Command）；悬停换底色提示但指针保持箭头 -->
+                    <Border
+                        Grid.Column="0"
+                        Style="{StaticResource StatCardBorderStyle}"
+                        Padding="16,14"
+                        PointerEntered="OnStatCardPointerEntered"
+                        PointerExited="OnStatCardPointerExited">
+                        <StackPanel Spacing="8">
+                            <TextBlock
+                                Text="地材记录"
+                                Style="{ThemeResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.EarthMaterialCount, Mode=OneWay}"
+                                    Style="{ThemeResource TitleTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock
+                                    Text="条"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,0,0,4"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Excel 同步模块尚未实现（恒为 0），不可点击；悬停高亮与其他统计卡保持一致 -->
+                    <Border
+                        Grid.Column="1"
+                        Style="{StaticResource StatCardBorderStyle}"
+                        Padding="16,14"
+                        PointerEntered="OnStatCardPointerEntered"
+                        PointerExited="OnStatCardPointerExited">
+                        <StackPanel Spacing="8">
+                            <TextBlock
+                                Text="Excel 待同步"
+                                Style="{ThemeResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.ExcelPendingCount, Mode=OneWay}"
+                                    Style="{ThemeResource TitleTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock
+                                    Text="条"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,0,0,4"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 预警卡：0 为安全（主色数字），&gt;0 为警示（橙色数字 + 底部警示线）；纯展示不可点击 -->
+                    <Border
+                        Grid.Column="2"
+                        Style="{StaticResource StatCardBorderStyle}"
+                        Padding="16,14"
+                        PointerEntered="OnStatCardPointerEntered"
+                        PointerExited="OnStatCardPointerExited">
+                        <Grid>
+                            <StackPanel Spacing="8">
+                                <TextBlock
+                                    Text="甲供低库存预警"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <!-- 安全态：0 条 -->
+                                <StackPanel
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    Visibility="{x:Bind ViewModel.PartyALowStockCount, Mode=OneWay, Converter={StaticResource CountToVisibility}}">
+                                    <TextBlock
+                                        Text="{x:Bind ViewModel.PartyALowStockCount, Mode=OneWay}"
+                                        Style="{ThemeResource TitleTextBlockStyle}"
+                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                    <TextBlock
+                                        Text="种"
+                                        VerticalAlignment="Bottom"
+                                        Margin="0,0,0,4"
+                                        Style="{ThemeResource CaptionTextBlockStyle}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <!-- 警示态：&gt;0 条 -->
+                                <StackPanel
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    Visibility="{x:Bind ViewModel.PartyALowStockCount, Mode=OneWay, Converter={StaticResource CountToVisibility}, ConverterParameter=Invert}">
+                                    <TextBlock
+                                        Text="{x:Bind ViewModel.PartyALowStockCount, Mode=OneWay}"
+                                        Style="{ThemeResource TitleTextBlockStyle}"
+                                        Foreground="#D97706" />
+                                    <TextBlock
+                                        Text="种"
+                                        VerticalAlignment="Bottom"
+                                        Margin="0,0,0,4"
+                                        Style="{ThemeResource CaptionTextBlockStyle}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                            <!-- 警示线：仅预警数量大于 0 时显示 -->
+                            <Rectangle
+                                Height="3"
+                                Margin="-16,0,-16,-14"
+                                VerticalAlignment="Bottom"
+                                Fill="#D97706"
+                                Opacity="0.85"
+                                Visibility="{x:Bind ViewModel.PartyALowStockCount, Mode=OneWay, Converter={StaticResource CountToVisibility}, ConverterParameter=Invert}" />
+                        </Grid>
+                    </Border>
+
+                    <Border
+                        Grid.Column="3"
+                        Style="{StaticResource StatCardBorderStyle}"
+                        Padding="16,14"
+                        PointerEntered="OnStatCardPointerEntered"
+                        PointerExited="OnStatCardPointerExited">
+                        <StackPanel Spacing="8">
+                            <TextBlock
+                                Text="机具在场"
+                                Style="{ThemeResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.EquipmentOnSiteCount, Mode=OneWay}"
+                                    Style="{ThemeResource TitleTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <TextBlock
+                                    Text="台"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,0,0,4"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+
+            <!-- 下部：快捷操作 -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="快捷操作" Style="{ThemeResource SubtitleTextBlockStyle}" />
+
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 快捷磁贴：白卡表面 + 彩色图标（功能色相保留在图标上，与素雅基调统一） -->
+                    <Button
+                        Grid.Column="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Height="72"
+                        Padding="8"
+                        Style="{StaticResource QuickActionButtonStyle}"
+                        Click="OnMaterialLedgerClick">
+                        <StackPanel Spacing="6" HorizontalAlignment="Center">
+                            <SymbolIcon Symbol="Library" HorizontalAlignment="Center" Foreground="#2563EB" />
+                            <TextBlock Text="台账明细" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        Grid.Column="1"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Height="72"
+                        Padding="8"
+                        Style="{StaticResource QuickActionButtonStyle}"
+                        Click="OnStockInOutClick">
+                        <StackPanel Spacing="6" HorizontalAlignment="Center">
+                            <SymbolIcon Symbol="Add" HorizontalAlignment="Center" Foreground="#10B981" />
+                            <TextBlock Text="登记入库/领用" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        Grid.Column="2"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Height="72"
+                        Padding="8"
+                        Style="{StaticResource QuickActionButtonStyle}"
+                        Click="OnCampEntryExitClick">
+                        <StackPanel Spacing="6" HorizontalAlignment="Center">
+                            <SymbolIcon Symbol="Remove" HorizontalAlignment="Center" Foreground="#F59E0B" />
+                            <TextBlock Text="登记进退场" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        Grid.Column="3"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Height="72"
+                        Padding="8"
+                        Style="{StaticResource QuickActionButtonStyle}"
+                        Click="OnBackupClick">
+                        <StackPanel Spacing="6" HorizontalAlignment="Center">
+                            <SymbolIcon Symbol="Save" HorizontalAlignment="Center" Foreground="#8B5CF6" />
+                            <TextBlock Text="备份数据" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </StackPanel>
+
+            <!-- 状态提示条：有消息才显示，浅灰容器与卡片语言一致 -->
+            <Border
+                Padding="12,7"
+                CornerRadius="4"
+                HorizontalAlignment="Left"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource StringToVisibility}}">
+                <TextBlock
+                    Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                    Style="{ThemeResource CaptionTextBlockStyle}"
+                    TextWrapping="Wrap" />
+            </Border>
+
+            <TextBlock
+                Text="OCR 与数据处理均在本机完成。Excel 是自动生成报表，手工修改不会回写。"
+                Style="{ThemeResource CaptionTextBlockStyle}"
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

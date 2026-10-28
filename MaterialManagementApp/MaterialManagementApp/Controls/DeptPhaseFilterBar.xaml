@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MaterialManagementApp.Controls.DeptPhaseFilterBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 筛选用「项目部 + 期数」双下拉条：嵌入各表格页查询面板。
+         项目部：「全部」表示不限制；期数：「全部」不限制、「无期数」仅看无分期记录、其余精确匹配。
+         通过 SelectedDept / SelectedPhase 依赖属性与视图模型双向绑定。 -->
+    <StackPanel Orientation="Horizontal" Spacing="12">
+        <ComboBox
+            x:Name="DeptBox"
+            Header="项目部"
+            MinWidth="140"
+            SelectionChanged="OnDeptSelectionChanged" />
+        <ComboBox
+            x:Name="PhaseBox"
+            Header="期数"
+            MinWidth="140"
+            SelectionChanged="OnPhaseSelectionChanged" />
+    </StackPanel>
+</UserControl>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MaterialManagementApp.Controls.DeptPicker"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 录入用项目部下拉框：候选项来自设置页维护的 ProjectDept 表（经 DeptPhaseService 缓存）。
+         通过 Value 依赖属性与行数据双向绑定，空串表示未选择项目部。 -->
+    <ComboBox
+        x:Name="InnerBox"
+        MinWidth="120"
+        Loaded="OnLoaded"
+        PlaceholderText="选择项目部"
+        SelectionChanged="OnSelectionChanged" />
+</UserControl>

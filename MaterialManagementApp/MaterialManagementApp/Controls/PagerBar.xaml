@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MaterialManagementApp.Controls.PagerBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 通用分页条：所有数据表格页共用。左侧显示页码与总条数，右侧为翻页按钮与每页条数下拉 -->
+    <Grid Padding="4,8" ColumnSpacing="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock
+            Grid.Column="0"
+            VerticalAlignment="Center"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="{x:Bind PageText, Mode=OneWay}" />
+
+        <StackPanel
+            Grid.Column="1"
+            Orientation="Horizontal"
+            Spacing="8"
+            VerticalAlignment="Center">
+            <Button
+                Content="上一页"
+                Click="OnPreviousClick"
+                IsEnabled="{x:Bind CanGoPrevious, Mode=OneWay}" />
+            <Button
+                Content="下一页"
+                Click="OnNextClick"
+                IsEnabled="{x:Bind CanGoNext, Mode=OneWay}" />
+            <ComboBox
+                x:Name="PageSizeSelector"
+                MinWidth="112"
+                SelectionChanged="OnPageSizeSelectionChanged">
+                <ComboBoxItem Content="20 条/页" />
+                <ComboBoxItem Content="50 条/页" />
+                <ComboBoxItem Content="100 条/页" />
+            </ComboBox>
+        </StackPanel>
+    </Grid>
+</UserControl>

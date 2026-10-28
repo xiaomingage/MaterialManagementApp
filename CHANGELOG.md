@@ -1,0 +1,73 @@
+# 变更日志（CHANGELOG）
+
+本文件记录 MaterialManagementApp 的全部功能与界面变更。
+规范：每条记录包含日期（YYYY-MM-DD）、版本号（小改动递增修订号，大功能递增次版本号）、变更类型（新增 / 优化 / 修复 / 删除）、变更描述。每次完成功能修改或界面调整后必须同步更新本文件。
+
+## [v1.1.1] - 2026-10-20
+
+### 修复
+- 修复悬停放大动画异常：移除工作台 4 张统计卡片的 EnableHover 悬停动效，全应用不再有悬停缩放，避免误触与视觉跳动
+- 修复左侧导航「机具设备」菜单图标显示异常：原图标 Glyph=E822 是设置齿轮，与底部「设置」项撞图且语义不符；改为扳手图标（Glyph=E90F），并将「小型机具明细」子项改用 Document 图标避免重复
+
+## [v1.1.0] - 2026-10-19
+
+### 新增
+- 新增「甲供物资台账」统一页面：合并原入库验收、出库领用、退库记录、库存查询 4 个独立页面，保留「物资申请档案」独立页面
+- 渣土运输页工具栏新增「OCR识别」按钮：弹窗调用本地离线 OCR，识别完成后自动新建空白行并按字段映射填充（物资名称、规格、数量、日期、车牌号、单据编号等），保持待保存状态
+- 自购物资明细页工具栏新增「导出Excel」按钮，替代被删除的全局数据导出模块
+- 新增通用导出服务 SimpleListExport：任意列表页一键导出 Excel（FileSavePicker 选择路径，自动排除未保存空白行）
+- OcrImportWindow 新增识别完成事件（RecognitionCompleted），支持外部页面订阅识别结果
+- 工作日志页新增「今日日志一键导出 Word」：日期与星期由系统时间自动填充、天气下拉（晴/多云/阴/小雨/大雨，默认晴）、多行工作内容文本框，点「导出Word」按 Assets\Templates\工作日志模板.docx 填充日期、星期、天气、工作内容与固定记录人（何南平），另存为 工作日志-yyyy-MM-dd.docx
+- 新增通用「项目部 / 期数」维度：ProjectDept（默认 信宜/梧州）、ProjectPhase（默认 一期/二期/三期）、DeptPhaseApplicableTable 三张配置表，种子数据入库；物资台账、渣土运输、自购物资三张业务表自动迁移增加 ProjectDept、ProjectPhase 两列
+- 设置页新增「项目部与期数」卡片：项目部/期数列表内联增改删（重命名级联更新业务记录、被引用时禁止删除；保留字「全部」「无期数」「无」不可用），适用栏目勾选框启用即对对应表执行 ALTER TABLE 迁移
+- 4 个适用页面（物资台账、渣土运输、自购申请、自购明细）表格新增「项目部」「期数」可编辑列，录入下拉取自配置；期数首项为「无」（存空串），适用于梧州等无期数场景
+- 4 个适用页面查询区新增「项目部」「期数」筛选条（复用 DeptPhaseFilterBar 控件）：项目部精确匹配，期数支持「全部 / 无期数 / 指定期数」三态；重置按钮同步清空维度筛选
+- 导出支持维度：模板导出（地材台账）文件名追期数后缀；渣土运输/自购申请/自购明细导出新增「项目部」「期数」列且工作表名带期数后缀，无期数时不加后缀
+
+### 优化
+- 左侧菜单精简：删除「地材台账」下的「导入单据」「数据导出」、「自购物资」下的「数据导出」三个模块
+- 全部 17 个数据列表页统一重构为「上方简单查询 + 下方表格」规范：查询区仅保留 2-4 个核心字段，取消所有大型录入表单
+- 可编辑表格页（13 个）工具栏统一为「新增/删除/导出/刷新」：点击新增在表格首行插入全编辑空白行，行内直接编辑，行尾保存/取消按钮，删除经二次确认
+- 只读汇总页（供应商结算、月度核销、库存查询、库存预警）保留只读表格 + 查询 + 导出，不提供增删改
+- 仪表盘快捷按钮「导入单据」改为「台账明细」
+- 相关数据模型统一实现 INotifyPropertyChanged 并增加 IsNewRow 内存标记，支持行内编辑实时刷新
+- 全部 20 个数据表格页新增分页展示（因 DataGrid 7.1.2 无行虚拟化，大数据量滚动卡顿）：16 个明细/可编辑页采用 SQLite LIMIT/OFFSET 后端分页，4 个只读汇总页（供应商结算、月度核销、库存查询、库存预警）采用内存分页
+- 新增通用分页控件 PagerBar，20 个表格页页脚统一提供「上一页 / 下一页 / 第 X / Y 页，共 N 条 / 每页条数（20、50、100，默认 20）」，翻页仅渲染当前页数据
+- 导出保持「导出全部」口径：SQL 分页页导出当前筛选条件下的全量结果（GetFilteredRowsForExport），只读汇总页导出全量结果（AllItems），不受当前页码限制；页脚数值合计口径：SQL 分页页按当前页统计、只读汇总页按全量统计
+- 左侧菜单各功能板块图标统一优化为 WinUI 3 原生风格：顶层使用 SymbolIcon，语义欠佳的库存管理（Package 包裹）、机具设备（Construction 施工）、设备租赁（Tag 标签）替换为更贴切图标；全部 19 个二级子菜单项补齐图标，列表/查询/预警/运输/结算等采用 Segoe Fluent Icons FontIcon 精确表意，未引入第三方图标库
+- 全局 UI 美化：新增 Styles/DesignTokens.xaml 设计 Token（圆角 8/12px、间距、动画时长、ThemeShadow）与 Styles/ControlStyles.xaml 公共样式；统一 ControlCornerRadius=8；20 个列表页查询面板 + 工作台统计卡片 + 设置页分区卡片统一应用 CardBorderStyle/StatCardBorderStyle（圆角 12px + ThemeShadow 阴影，通过 UIHelper.Elevation 附加属性设置 Translation.Z=4 使阴影可见）；DataGrid 全局仅显示水平网格线；主窗口 Frame 增加 EntranceNavigationTransitionInfo 页面切换过渡动画
+- 主题与强调色：设置页主题切换改为即时生效（OnThemeIndexChanged 直接应用 RequestedTheme，无需点保存）；新增强调色自定义（7 种预设色板 + ColorPicker 取色），通过 ThemeHelper.ApplyAccentColor 覆盖 SystemAccentColor 及其亮/暗变体资源，所有使用系统强调色的控件即时变色；AppSettings 新增 AccentColor 字段，启动时自动应用
+- 交互动效：UIHelper 新增 EnableHover 附加属性，卡片鼠标悬停时通过 Composition 动画平滑缩放至 1.025 倍并抬升阴影（Translation.Z 4→12），移出恢复，150ms 并使用自定义三次贝塞尔缓动曲线（控制点 0.0,0.0 / 0.2,1，标准 ease-out）
+- 工作台仪表盘优化：4 张统计卡片数字使用强调色并在底部增加强调色条带，视觉层次更清晰；快捷操作按钮改为图标在上、文字在下的卡片式布局（高度 96px），主操作保留强调色样式
+
+### 修复
+- 修复 IDE（Visual Studio / VS Code）248 个假报错：原 `[ObservableProperty] public partial T Name { get; set; }` 依赖 C# 13 preview 语言版本，IDE 语言服务不支持导致 partial 属性、生成的 Command 与 XAML 控件名全部报"不存在"；将 22 个 ViewModel 共 234 个 partial 属性改为经典字段式 `[ObservableProperty] private T _name;`，移除 `LangVersion=preview`，抑制 WinRT AOT 误报警告 MVVMTK0045
+- 修复 IDE 设计时构建未加载 MVVM 源生成器产物：csproj 增加 `EmitCompilerGeneratedFiles=true` 将生成代码落盘，并以 `Condition="'$(DesignTimeBuild)'=='true'"` 显式包含 `generated/**/*.cs` 为 Compile 项，正常构建不受影响（无重复定义）
+- 修复 F5 调试/直接启动即闪退（XamlParseException：找不到资源 SystemAccentColorDefaultBrush）：该 Brush 是 UWP 资源键，WinUI 3 不内置；DesignTokens.xaml 显式定义 SystemAccentColorDefaultBrush 及 Light1-3/Dark1-3 共 7 个 SolidColorBrush，ThemeHelper.ApplyAccentColor 同步覆盖对应 Brush 资源，自定义强调色可即时生效
+- 代码清理：删除 ReceiptFieldExtractor 未使用的 QuantityLabels 私有字段；SettingsService.DefaultDatabaseFolder 改为 static（同步修正 SettingsViewModel 调用方）；ThemeHelper 去除 h 的冗余初始化
+
+### 删除
+- 删除导入单据页、地材数据导出页、自购数据导出页及甲供物资 4 个旧独立页面（共 21 个孤儿文件）
+
+## [v1.0.0] - 2026-10-19
+
+### 新增
+- 全部 28 个 ViewModel 接入 Serilog 结构化日志：操作日志留存 31 天、系统日志留存 62 天，同步输出 IDE 调试窗口
+- 安装包支持程序安装路径与数据存储路径双路径自定义，配置写入 install-config.json，程序启动时统一读取
+- 全部 20 个台账页面操作按钮区统一放置「新增」按钮
+- 设置页新增「本地 AI 配置」选项卡：Ollama 服务地址、模型名称（下拉+手输）、测试连接，配置持久化供 OCR 使用
+- 台账明细页集成离线 OCR：「导入单据/OCR识别」非模态窗体，支持图片预览、拖拽、粘贴、截屏，显示进度条与复制全部；内嵌 Sdcb.SimdPaddleOCR（PP-OCRv6）纯离线引擎，正则智能抽取物资名称、规格、数量、单价、金额、供应商、单据编号、进场日期、车牌号、经办人等 11 个字段
+- 新增 3D 立体风格应用图标，覆盖窗口标题栏、桌面快捷方式、exe 嵌入图标与任务栏
+
+### 优化
+- 重构台账明细页为上下分栏布局：上半部分紧凑查询筛选面板（开始日期、结束日期、物资名称、查询、重置），下半部分数据列表与操作区
+- 台账明细改为表格内直接新增：点击新增在表格首行插入全编辑状态空白行，行末保存（入库刷新）/取消（移除），无弹窗
+- OCR 识别链路优先走本地 Ollama 接口，未配置或连接失败自动回退系统 OCR 方案
+- 安装目录裁剪多余语言文件夹，仅保留 zh-CN / en-us 及应用自身目录
+
+### 修复
+- 修复 dotnet publish 漏拷 XAML 编译产物（*.xbf 与应用 .pri）导致安装后启动 XamlParseException 闪退
+- 修复 OCR 识别无响应（事件处理器绑定了模拟方法，未调用真正的 RecognizeAsync），并优化超大图片缩放避免 OcrEngine 异常
+- 修复升级安装后预警阈值、默认工程名等用户设置丢失：目标数据目录无 settings.json 时自动从旧位置迁移；同时自动迁移两处候选位置的旧数据库
+- 修复 Inno Setup 在 InitializeWizard 阶段提前展开 app 常量导致安装包运行时闪退（读取配置逻辑移至 wpSelectDir 的 NextButtonClick）
+- 修复 OCR 车牌号字段恒「未识别」：PlateRegex 缺少捕获组，与 MatchValue 统一取 Groups[1] 的约定不符

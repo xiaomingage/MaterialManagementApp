@@ -1,0 +1,38 @@
+# ===== 构建产物 =====
+[Bb]in/
+[Oo]bj/
+*.binlog
+.artifacts/
+
+# ===== Visual Studio / IDE =====
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# ===== 运行期数据（数据库/日志/备份绝不入库）=====
+[Bb]in/**/[Dd]ata/
+[Dd]ata/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+Logs/
+*.log
+
+# ===== 安装包输出 =====
+**/installer/output/
+
+# ===== Python（OCR 批处理工具）=====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ===== 其他 =====
+TestResults/
+*.aps
+*.tmp
+Thumbs.db
+.DS_Store

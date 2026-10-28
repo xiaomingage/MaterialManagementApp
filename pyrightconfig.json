@@ -1,0 +1,8 @@
+{
+    // Pylance/Pyright 配置：让 IDE 能解析 OCR 工具的第三方依赖与本地模块。
+    // 不改变任何运行逻辑，仅用于消除编辑器红标（reportMissingImports）。
+    "extraPaths": [
+        "C:/Users/xm/AppData/Local/Programs/Python/Python312/Lib/site-packages",
+        "OcrBatchTool"
+    ]
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MaterialManagementApp.Controls.PhasePicker"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 录入用期数下拉框：首项固定为空白选项「无」（选中存空串，表示该记录没有期数，如梧州项目），
+         其后为设置页维护的全部期数。通过 Value 依赖属性与行数据双向绑定。 -->
+    <ComboBox
+        x:Name="InnerBox"
+        MinWidth="120"
+        Loaded="OnLoaded"
+        SelectionChanged="OnSelectionChanged" />
+</UserControl>

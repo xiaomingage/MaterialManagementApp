@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="MaterialManagementApp.Pages.PlaceholderPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24">
+        <StackPanel
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Spacing="16"
+            MaxWidth="560">
+            <InfoBar
+                IsOpen="True"
+                IsClosable="False"
+                Severity="Informational"
+                Title="页面建设中"
+                Message="该功能页面尚未实现，当前为导航占位。" />
+            <TextBlock
+                x:Name="TitleText"
+                Style="{ThemeResource TitleTextBlockStyle}"
+                HorizontalAlignment="Center"
+                TextWrapping="Wrap" />
+            <TextBlock
+                x:Name="DescriptionText"
+                Style="{ThemeResource BodyTextBlockStyle}"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                HorizontalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap" />
+            <Button
+                Content="返回工作台"
+                HorizontalAlignment="Center"
+                Click="OnBackToDashboardClick" />
+        </StackPanel>
+    </Grid>
+</Page>

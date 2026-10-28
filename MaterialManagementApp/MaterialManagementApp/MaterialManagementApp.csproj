@@ -1,0 +1,95 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>MaterialManagementApp</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <Nullable>enable</Nullable>
+    <!-- [ObservableProperty] 改用字段式（兼容所有 C# 版本，IDE 语言服务无需 preview 即可识别）；
+         MVVMTK0045 是 WinRT AOT 场景警告，本项目非裁剪发布且 ViewModel 为普通 CLR 对象，属误报，予以抑制 -->
+    <NoWarn>$(NoWarn);MVVMTK0045</NoWarn>
+    <!-- 将源生成器产物落盘到 obj/.../generated/，帮助 IDE 语言服务加载 [ObservableProperty]/[RelayCommand] 生成的代码 -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <!-- 非打包运行：跳过 MSIX 部署，F5 直接启动 exe。打包工程仍保留，发布安装包时切回即可 -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <!-- 自包含 Windows App SDK 运行时：本机未安装 10.0.28000 运行时，不自包含会启动即失败 -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- .NET 运行时自包含：目标机器无需预装 .NET 8 Desktop Runtime -->
+    <SelfContained>true</SelfContained>
+    <!-- 应用版本号，与安装脚本保持一致 -->
+    <Version>1.1.0</Version>
+    <!-- 应用图标：exe、任务栏、桌面快捷方式统一使用 -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <!-- DataGrid 控件：7.1.x 提供 CommunityToolkit.WinUI.UI.Controls 命名空间，匹配页面 XAML 的 xmlns 引用 -->
+    <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.DataGrid" Version="7.1.2" />
+    <!-- 离线 OCR：纯 C# PP-OCRv6 推理（DET+CLS+REC），不依赖 Paddle Inference / ONNX Runtime / OpenCV 原生库，
+         中文模型以嵌入资源随程序集分发，无需额外部署模型文件，可完全离线运行 -->
+    <PackageReference Include="Sdcb.SimdPaddleOCR" Version="2.0.0" />
+    <PackageReference Include="Sdcb.SimdPaddleOCR.Models.ChineseV6Tiny" Version="1.0.0" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <!-- 日志：Serilog 引擎 + 桥接 Microsoft.Extensions.Logging；AppLog.cs 中配置双文件滚动输出 -->
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+  </ItemGroup>
+
+  <!-- 内置台账模板随生成输出到 Assets\Templates，运行期不再依赖外部共享目录 -->
+  <ItemGroup>
+    <Content Include="Assets\Templates\*.xlsx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Templates\*.docx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- 图标同时随生成输出一份：MainWindow 通过 AppWindow.SetIcon 读取它设置窗口/任务栏图标 -->
+    <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Publish Properties -->
+  <PropertyGroup>
+    <!-- R2R 预编译保持关闭：对启动速度收益有限，且可减少发布变量 -->
+    <PublishReadyToRun>False</PublishReadyToRun>
+    <!-- ClosedXML / OpenXml / WinUI 均依赖反射，裁剪会导致运行时找不到类型，故关闭 -->
+    <PublishTrimmed>False</PublishTrimmed>
+  </PropertyGroup>
+
+  <!-- WinUI 3 已知问题：dotnet publish 不会把 XAML 编译产物（*.xbf 与应用 .pri）复制到发布目录，
+       导致发布版启动即 XamlParseException（LoadComponent 找不到 MainWindow.xbf）。
+       这里在发布完成后显式补拷，与中间输出目录保持一致。 -->
+  <Target Name="CopyXamlArtifactsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <XamlArtifacts Include="$(OutDir)*.xbf;$(OutDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(XamlArtifacts)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- 发布目录里 WinUI 会带出 ~90 个语言资源子目录（每个仅一个 .mui），
+       应用界面只有中文，保留 zh-CN 与 en-us 即可，其余删除以精简安装目录文件数。
+       用 Exec 在工作目录（=发布目录）下清理，避免 MSBuild 通配符与中文路径带来的匹配问题。 -->
+  <Target Name="TrimPublishLocalization" AfterTargets="CopyXamlArtifactsToPublish">
+    <Exec
+      WorkingDirectory="$(PublishDir)"
+      Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-ChildItem -Directory | Where-Object { @('zh-CN','en-us','Assets','Data','Logs','Microsoft.UI.Xaml') -notcontains $_.Name } | Remove-Item -Recurse -Force&quot;" />
+    <Message Importance="high" Text="已裁剪发布目录的多余语言资源，保留 zh-CN / en-us。" />
+  </Target>
+</Project>
