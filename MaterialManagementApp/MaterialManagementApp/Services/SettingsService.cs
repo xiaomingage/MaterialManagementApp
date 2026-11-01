@@ -141,17 +141,7 @@ public sealed class SettingsService
     {
         try
         {
-            if (!File.Exists(SettingsFilePath))
-            {
-                Settings = new AppSettings();
-                return;
-            }
-
-            var json = File.ReadAllText(SettingsFilePath);
-            var loaded = JsonSerializer.Deserialize<AppSettings>(json);
-
-            // 文件中只写了 "null" 时反序列化结果为 null，同样回退默认值避免空引用
-            Settings = Normalize(loaded ?? new AppSettings());
+            Settings = LoadSettingsFrom(SettingsFilePath);
         }
         catch (Exception ex)
         {
@@ -160,40 +150,71 @@ public sealed class SettingsService
         }
     }
 
+    /// <summary>
+    /// 从指定路径读取配置并校正（供 <see cref="Load"/> 与单元测试复用）。
+    /// 文件缺失返回默认配置；JSON 损坏时抛出异常，由调用方决定兜底方式。
+    /// </summary>
+    /// <param name="path">配置文件完整路径。</param>
+    /// <returns>校正后的配置对象，永不为 null。</returns>
+    internal static AppSettings LoadSettingsFrom(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return new AppSettings();
+        }
+
+        var json = File.ReadAllText(path);
+        var loaded = JsonSerializer.Deserialize<AppSettings>(json);
+
+        // 文件中只写了 "null" 时反序列化结果为 null，同样回退默认值避免空引用
+        return Normalize(loaded ?? new AppSettings());
+    }
+
     /// <summary>将当前设置写入磁盘，成功后触发 <see cref="SettingsChanged"/>。</summary>
     /// <exception cref="IOException">目标目录无写入权限或磁盘不可写时抛出，由调用方提示用户。</exception>
     public void Save()
     {
         lock (_saveLock)
         {
-            var directory = Path.GetDirectoryName(SettingsFilePath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            // 先写临时文件再原子替换：避免写入途中断电导致配置文件被截断成无效 JSON。
-            // 临时名带唯一后缀：残留的旧 .tmp 被杀毒/索引器短暂占用时不会顶撞本次保存；
-            // 保存结束后无论成败都清掉本次临时文件，目录不留垃圾。
-            var tempPath = $"{SettingsFilePath}.{Guid.NewGuid():N}.tmp";
-            try
-            {
-                File.WriteAllText(tempPath, JsonSerializer.Serialize(Settings, _jsonOptions));
-                File.Move(tempPath, SettingsFilePath, overwrite: true);
-            }
-            catch (IOException)
-            {
-                TryDelete(tempPath);
-                throw;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                TryDelete(tempPath);
-                throw;
-            }
+            SaveSettingsTo(SettingsFilePath, Settings);
         }
 
         SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 把配置原子写入指定路径（供 <see cref="Save"/> 与单元测试复用）：
+    /// 先写唯一临时文件再替换，避免写入途中断电导致配置被截断成无效 JSON；
+    /// 临时名带唯一后缀，残留旧 .tmp 被占用时不会顶撞本次保存；失败时清理临时文件后重抛。
+    /// </summary>
+    /// <param name="path">目标配置文件完整路径。</param>
+    /// <param name="settings">要写入的配置对象。</param>
+    /// <exception cref="IOException">目录不可写或磁盘不可写时抛出。</exception>
+    /// <exception cref="UnauthorizedAccessException">无文件访问权限时抛出。</exception>
+    internal static void SaveSettingsTo(string path, AppSettings settings)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(tempPath, JsonSerializer.Serialize(settings, _jsonOptions));
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch (IOException)
+        {
+            TryDelete(tempPath);
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            TryDelete(tempPath);
+            throw;
+        }
     }
 
     /// <summary>尽力删除临时文件；删除失败（仍被占用）不影响主流程。</summary>
@@ -222,7 +243,7 @@ public sealed class SettingsService
     /// <summary>校正反序列化后不合法的字段，保证下游使用安全。</summary>
     /// <param name="settings">从磁盘读出的设置对象。</param>
     /// <returns>校正后的同一对象，便于链式返回。</returns>
-    private static AppSettings Normalize(AppSettings settings)
+    internal static AppSettings Normalize(AppSettings settings)
     {
         if (settings.LowStockThreshold <= 0)
         {
@@ -286,7 +307,7 @@ public sealed class SettingsService
     /// 与数据库同级，便于随数据一起备份；首次切换目录时自动迁移旧位置配置。
     /// </summary>
     /// <returns>settings.json 的绝对路径。</returns>
-    private static string ResolveSettingsFilePath()
+    internal static string ResolveSettingsFilePath()
     {
         var directory = DefaultSettingsDirectory;
         Directory.CreateDirectory(directory);
