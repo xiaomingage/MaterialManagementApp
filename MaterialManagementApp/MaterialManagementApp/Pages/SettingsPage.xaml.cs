@@ -28,16 +28,13 @@ public sealed partial class SettingsPage : Page
     }
 
     /// <summary>
-    /// 页面加载完成时把当前实际使用的数据库路径显示到界面上。
-    /// 路径由 SettingsService 按「配置值 → 默认程序目录\Data\MaterialSystem.db」的规则解析，
-    /// 直接取实际生效值而不是配置原值，避免用户看到空串时误以为路径未设置。
+    /// 页面加载完成时用当前强调色初始化取色器。
+    /// 数据库与配置文件路径已改为 x:Bind 绑定视图模型展示，无需在此赋值。
     /// </summary>
     /// <param name="sender">事件源。</param>
     /// <param name="e">路由事件参数。</param>
     private void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        DatabasePathTextBox.Text = SettingsService.Instance.EffectiveDatabasePath;
-
         // 用当前强调色初始化取色器（ColorPicker 用 Color，配置存的是 hex 字符串）
         if (TryParseHexColor(ViewModel.AccentColor, out var initialColor))
         {

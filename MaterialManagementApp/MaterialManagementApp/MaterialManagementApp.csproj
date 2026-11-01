@@ -22,7 +22,7 @@
     <!-- .NET 运行时自包含：目标机器无需预装 .NET 8 Desktop Runtime -->
     <SelfContained>true</SelfContained>
     <!-- 应用版本号，与安装脚本保持一致 -->
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <!-- 应用图标：exe、任务栏、桌面快捷方式统一使用 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>

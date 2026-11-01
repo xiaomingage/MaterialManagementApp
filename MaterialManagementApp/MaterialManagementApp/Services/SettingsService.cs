@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using MaterialManagementApp.Models;
 
@@ -41,6 +42,74 @@ public sealed class SettingsService
     /// 该目录由 <c>DatabaseService</c> 在解析路径时自动创建，本属性只给出位置，不做 IO。
     /// </summary>
     public static string DefaultDatabaseFolder => AppPaths.ProgramDataDir;
+
+    /// <summary>引导文件名：内容为一行自定义 settings.json 的完整路径；文件缺失或为空表示使用默认位置。</summary>
+    private const string SettingsRedirectFileName = "settings.path";
+
+    /// <summary>
+    /// settings.json 的默认存放目录：安装器指定的数据目录（历史安装留下的 install-config.json），
+    /// 未配置时为程序目录\Data——配置跟 exe 走，拷贝整个程序文件夹即可带着配置搬家，不再落到 C 盘。
+    /// </summary>
+    public static string DefaultSettingsDirectory => AppPaths.DataRoot ?? AppPaths.ProgramDataDir;
+
+    /// <summary>引导文件（settings.path）的完整路径，位于默认配置目录内。</summary>
+    public static string SettingsRedirectFilePath => Path.Combine(DefaultSettingsDirectory, SettingsRedirectFileName);
+
+    /// <summary>
+    /// 读取引导文件中记录的自定义 settings.json 路径。
+    /// 引导文件缺失、内容为空或指向的文件已不存在时返回 null（使用默认位置）。
+    /// </summary>
+    public static string? GetCustomSettingsFile()
+    {
+        try
+        {
+            var boot = SettingsRedirectFilePath;
+            if (!File.Exists(boot))
+            {
+                return null;
+            }
+
+            var line = File.ReadAllLines(boot)
+                .Select(l => l.Trim())
+                .FirstOrDefault(l => l.Length > 0);
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return null;
+            }
+
+            var full = Path.GetFullPath(line);
+            return File.Exists(full) ? full : null;
+        }
+        catch (Exception ex)
+        {
+            // 引导文件读不出来不能阻断启动：回退默认位置
+            System.Diagnostics.Debug.WriteLine($"[SettingsService] 读取配置引导文件失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 写入或清除配置文件重定向（引导文件）。供设置页「选择配置文件」调用，
+    /// 立即生效——下次启动按引导文件加载；path 为空表示恢复默认位置（删除引导文件）。
+    /// </summary>
+    /// <exception cref="IOException">目录不可写时抛出，由调用方提示用户。</exception>
+    public static void SetCustomSettingsFile(string? path)
+    {
+        var boot = SettingsRedirectFilePath;
+        Directory.CreateDirectory(DefaultSettingsDirectory);
+
+        var trimmed = (path ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            if (File.Exists(boot))
+            {
+                File.Delete(boot);
+            }
+            return;
+        }
+
+        File.WriteAllText(boot, Path.GetFullPath(trimmed));
+    }
 
     /// <summary>
     /// 当前实际生效的数据库文件完整路径。
@@ -212,23 +281,19 @@ public sealed class SettingsService
     }
 
     /// <summary>
-    /// 解析配置文件路径：安装版放在向导中选择的数据存储目录，与数据库同级，便于随数据库一起备份；
-    /// 开发态仍优先本地应用数据目录，异常时回退到用户本地应用数据目录。
+    /// 解析配置文件路径：优先按引导文件（settings.path）重定向到用户在设置页选择的
+    /// settings.json；未重定向时使用默认目录（安装器数据目录或程序目录\Data）下的 settings.json，
+    /// 与数据库同级，便于随数据一起备份；首次切换目录时自动迁移旧位置配置。
     /// </summary>
     /// <returns>settings.json 的绝对路径。</returns>
     private static string ResolveSettingsFilePath()
     {
-        if (AppPaths.DataRoot is { } dataRoot)
-        {
-            Directory.CreateDirectory(dataRoot);
-            var target = Path.Combine(dataRoot, "settings.json");
-            TryMigrateLegacySettings(target);
-            return target;
-        }
-
-        var directory = ResolveLegacySettingsDirectory();
+        var directory = DefaultSettingsDirectory;
         Directory.CreateDirectory(directory);
-        return Path.Combine(directory, "settings.json");
+
+        var target = GetCustomSettingsFile() ?? Path.Combine(directory, "settings.json");
+        TryMigrateLegacySettings(target);
+        return target;
     }
 
     /// <summary>

@@ -55,36 +55,60 @@
                 Style="{StaticResource StatCardBorderStyle}">
                 <StackPanel Spacing="12">
                     <TextBlock Text="数据库" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBox
-                        x:Name="DatabasePathTextBox"
-                        Header="当前使用的数据库文件"
-                        IsReadOnly="True"
+                    <TextBlock
+                        Text="点击「选择数据库文件」选取要加载的 .db 文件；不选择则使用程序目录下默认文件，修改后重启程序生效。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
-                    <TextBox
-                        Header="数据库保存位置（为空表示使用默认：程序目录\Data\MaterialSystem.db）"
-                        Text="{x:Bind ViewModel.ConfiguredDatabasePath, Mode=TwoWay}"
-                        PlaceholderText="例如 D:\MaterialData\MaterialSystem.db"
+                    <TextBlock Text="当前使用的数据库文件" FontWeight="SemiBold" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.DatabasePath, Mode=OneWay}"
+                        IsTextSelectionEnabled="True"
                         TextWrapping="Wrap" />
-                    <TextBox
-                        Header="默认存放目录"
-                        IsReadOnly="True"
-                        TextWrapping="Wrap"
-                        Text="{x:Bind ViewModel.DefaultDatabaseFolder, Mode=OneWay}" />
-                    <TextBox
-                        Header="配置文件"
-                        IsReadOnly="True"
-                        TextWrapping="Wrap"
-                        Text="{x:Bind ViewModel.SettingsFilePath, Mode=OneWay}" />
+                    <TextBlock
+                        Text="默认存放目录："
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.DefaultDatabaseFolder, Mode=OneWay}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        IsTextSelectionEnabled="True"
+                        TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="浏览…" Command="{x:Bind ViewModel.BrowseDatabasePathCommand}" />
+                        <Button Content="选择数据库文件…" Command="{x:Bind ViewModel.BrowseDatabaseFileCommand}" />
+                        <Button
+                            Content="恢复默认位置"
+                            Command="{x:Bind ViewModel.RestoreDefaultDatabaseCommand}"
+                            Visibility="{x:Bind ViewModel.RestoreDefaultDatabaseVisibility, Mode=OneWay}" />
                         <Button Content="备份数据库" Command="{x:Bind ViewModel.BackupDatabaseCommand}" />
                         <Button Content="打开所在文件夹" Command="{x:Bind ViewModel.OpenDatabaseFolderCommand}" />
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 配置文件 -->
+            <Border
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="配置文件" Style="{ThemeResource SubtitleTextBlockStyle}" />
                     <TextBlock
-                        Text="修改保存位置后点击「保存」，重启程序生效；新位置首次启动会创建全新空库，迁移旧数据请先在原位置「备份数据库」。"
+                        Text="点击「选择配置文件」选取要加载的 settings.json；不选择则使用程序目录下默认文件，修改后重启程序生效。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
+                    <TextBlock Text="当前使用的配置文件" FontWeight="SemiBold" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.SettingsFilePath, Mode=OneWay}"
+                        IsTextSelectionEnabled="True"
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="选择配置文件…" Command="{x:Bind ViewModel.BrowseSettingsFileCommand}" />
+                        <Button
+                            Content="恢复默认位置"
+                            Command="{x:Bind ViewModel.RestoreDefaultSettingsFileCommand}"
+                            Visibility="{x:Bind ViewModel.RestoreDefaultSettingsVisibility, Mode=OneWay}" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

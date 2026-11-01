@@ -93,7 +93,6 @@ public partial class SettingsViewModel : ObservableObject
         AccentColor = "#2563EB";
         DatabasePath = string.Empty;
         SettingsFilePath = string.Empty;
-        ConfiguredDatabasePath = string.Empty;
         DefaultDatabaseFolder = string.Empty;
         OllamaUrl = "http://localhost:11434";
         OllamaModel = string.Empty;
@@ -195,10 +194,6 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _settingsFilePath;
 
-    /// <summary>配置中填写的数据库路径（只读展示）；为空表示使用默认路径。</summary>
-    [ObservableProperty]
-    private string _configuredDatabasePath;
-
     /// <summary>默认数据库存放目录（只读展示）。</summary>
     [ObservableProperty]
     private string _defaultDatabaseFolder;
@@ -246,6 +241,18 @@ public partial class SettingsViewModel : ObservableObject
             ? Visibility.Visible
             : Visibility.Collapsed;
 
+    /// <summary>「恢复默认位置」按钮显隐：配置了自定义数据库文件时才显示。</summary>
+    public Visibility RestoreDefaultDatabaseVisibility =>
+        string.IsNullOrWhiteSpace(SettingsService.Instance.Settings.DatabasePath)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+    /// <summary>「恢复默认位置」按钮显隐：重定向了配置文件（存在 settings.path 引导）时才显示。</summary>
+    public Visibility RestoreDefaultSettingsVisibility =>
+        SettingsService.GetCustomSettingsFile() is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
     /// <summary>数据库备份保留份数；保存设置时写回配置文件。</summary>
     [ObservableProperty]
     private int _backupRetentionCount;
@@ -280,8 +287,9 @@ public partial class SettingsViewModel : ObservableObject
 
             DatabasePath = DatabaseService.Instance.DatabasePath;
             SettingsFilePath = SettingsService.Instance.SettingsFilePath;
-            ConfiguredDatabasePath = settings.DatabasePath;
             DefaultDatabaseFolder = SettingsService.DefaultDatabaseFolder;
+            OnPropertyChanged(nameof(RestoreDefaultDatabaseVisibility));
+            OnPropertyChanged(nameof(RestoreDefaultSettingsVisibility));
 
             OllamaUrl = string.IsNullOrWhiteSpace(settings.OllamaUrl) ? "http://localhost:11434" : settings.OllamaUrl;
             OllamaModel = settings.OllamaModel ?? string.Empty;
@@ -343,12 +351,7 @@ public partial class SettingsViewModel : ObservableObject
             settings.CloseAction = CloseAction is "Ask" or "MinimizeToTray" or "Exit" ? CloseAction : "Ask";
             settings.AccentColor = string.IsNullOrWhiteSpace(AccentColor) ? "#2563EB" : AccentColor.Trim();
 
-            // 数据库保存位置：为空表示使用默认位置（程序目录\Data\MaterialSystem.db），修改后重启程序生效
-            var newDatabasePath = (ConfiguredDatabasePath ?? string.Empty).Trim();
-            var databasePathChanged = !string.Equals(newDatabasePath, settings.DatabasePath, StringComparison.OrdinalIgnoreCase);
-            settings.DatabasePath = newDatabasePath;
-
-            // 地址留空会被视为「未配置」，因此这里补回默认本机地址，保证回退逻辑判断稳定
+            // 数据库保存位置由「选择数据库文件」按钮即时写入并保存，这里不再处理
             settings.OllamaUrl = string.IsNullOrWhiteSpace(OllamaUrl) ? "http://localhost:11434" : OllamaUrl.Trim();
             settings.OllamaModel = (OllamaModel ?? string.Empty).Trim();
 
@@ -369,9 +372,7 @@ public partial class SettingsViewModel : ObservableObject
                 ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? settings.OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
                 : "未配置模型，识别单据时将使用系统 OCR。";
 
-            StatusMessage = databasePathChanged
-                ? "设置已保存。数据库保存位置已修改，重启程序后生效。"
-                : "设置已保存。";
+            StatusMessage = "设置已保存。";
             _logger.LogInformation("应用设置已保存。");
         }
         catch (Exception ex)
@@ -408,33 +409,114 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 弹出文件选择器选择数据库文件位置，选中的完整路径写入「数据库保存位置」输入框；
-    /// 仍需点击「保存」写入配置，重启程序后在新位置生效。
+    /// 弹出文件选择器选择要加载的数据库文件（.db），选中后立即写入配置并保存，重启程序后生效；
+    /// 取消选择则维持现状（继续使用当前库或默认库）。
     /// </summary>
     [RelayCommand]
-    private async Task BrowseDatabasePathAsync()
+    private async Task BrowseDatabaseFileAsync()
     {
+        var file = await PickFileAsync(".db");
+        if (file is null)
+        {
+            return;
+        }
+
         try
         {
-            var picker = new FileOpenPicker
-            {
-                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
-            };
-            picker.FileTypeFilter.Add(".db");
-            WinRT.Interop.InitializeWithWindow.Initialize(
-                picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow!));
-
-            var file = await picker.PickSingleFileAsync();
-            if (file is not null)
-            {
-                ConfiguredDatabasePath = file.Path;
-            }
+            SettingsService.Instance.Settings.DatabasePath = file.Path;
+            SettingsService.Instance.Save();
+            RefreshPathDisplays();
+            StatusMessage = "已选择数据库文件，重启程序后生效。";
+            _logger.LogInformation("已选择数据库文件：{Path}", file.Path);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "选择数据库文件失败。");
-            StatusMessage = $"选择数据库文件失败：{ex.Message}";
+            _logger.LogError(ex, "保存数据库文件选择失败。");
+            StatusMessage = $"保存失败：{ex.Message}";
         }
+    }
+
+    /// <summary>清除自定义数据库文件，恢复使用程序目录\Data\MaterialSystem.db 默认库，重启后生效。</summary>
+    [RelayCommand]
+    private void RestoreDefaultDatabase()
+    {
+        try
+        {
+            SettingsService.Instance.Settings.DatabasePath = string.Empty;
+            SettingsService.Instance.Save();
+            RefreshPathDisplays();
+            StatusMessage = "已恢复默认数据库位置，重启程序后生效。";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "恢复默认数据库位置失败。");
+            StatusMessage = $"恢复默认失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// 弹出文件选择器选择要加载的配置文件（.json），选中后写入引导文件（settings.path），
+    /// 重启程序后按该文件加载配置；取消选择则维持现状。
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseSettingsFileAsync()
+    {
+        var file = await PickFileAsync(".json");
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            SettingsService.SetCustomSettingsFile(file.Path);
+            RefreshPathDisplays();
+            StatusMessage = "已选择配置文件，重启程序后生效。";
+            _logger.LogInformation("已选择配置文件：{Path}", file.Path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "保存配置文件选择失败。");
+            StatusMessage = $"保存失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>清除配置文件重定向（删除 settings.path 引导文件），恢复使用程序目录\Data\settings.json，重启后生效。</summary>
+    [RelayCommand]
+    private void RestoreDefaultSettingsFile()
+    {
+        try
+        {
+            SettingsService.SetCustomSettingsFile(null);
+            RefreshPathDisplays();
+            StatusMessage = "已恢复默认配置文件位置，重启程序后生效。";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "恢复默认配置文件位置失败。");
+            StatusMessage = $"恢复默认失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>统一文件选择器入口：按扩展名过滤的弹窗，取消时返回 null。</summary>
+    private static async Task<Windows.Storage.StorageFile?> PickFileAsync(string extension)
+    {
+        var picker = new FileOpenPicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+        };
+        picker.FileTypeFilter.Add(extension);
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow!));
+        return await picker.PickSingleFileAsync();
+    }
+
+    /// <summary>刷新路径展示与「恢复默认位置」按钮显隐。</summary>
+    private void RefreshPathDisplays()
+    {
+        DatabasePath = DatabaseService.Instance.DatabasePath;
+        OnPropertyChanged(nameof(RestoreDefaultDatabaseVisibility));
+        OnPropertyChanged(nameof(RestoreDefaultSettingsVisibility));
     }
 
     /// <summary>
