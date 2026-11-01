@@ -3,7 +3,7 @@
 ; 编译方式（任选其一）：
 ;   1. 图形界面：用 Inno Setup 打开本文件，按 F9 编译
 ;   2. 命令行：  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
-; 产物输出：installer\output\MaterialManagementApp_Setup_1.3.0.exe
+; 产物输出：installer\output\MaterialManagementApp_Setup_1.3.1.exe
 ;
 ; 数据路径策略（绿色便携）：
 ;   数据库默认保存在程序安装目录下的 Data 子目录内，数据随软件走；
@@ -17,7 +17,7 @@
 
 #define MyAppName "物资管理系统"
 #define MyAppNameEn "MaterialManagementApp"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppPublisher "MaterialManagementApp"
 #define MyAppExeName "MaterialManagementApp.exe"
 ; 发布产物目录（dotnet publish -c Release -r win-x64 的输出，相对本脚本所在目录）

@@ -28,7 +28,7 @@ public sealed record UpdateCheckResult(
 /// 所有网络操作均为异步，不阻塞 UI；检测结果带 5 分钟缓存，短时间反复点击版本号不会重复请求。
 /// 更新全程由用户确认（检测 → 确认弹窗 → 下载进度 → 拉起安装向导），绝不静默安装。
 /// </summary>
-public sealed class UpdateService
+public class UpdateService
 {
     private static readonly Lazy<UpdateService> _instance = new(() => new UpdateService());
 
@@ -49,7 +49,8 @@ public sealed class UpdateService
     private UpdateCheckResult? _cachedResult;
     private DateTimeOffset _cachedAtUtc;
 
-    private UpdateService()
+    /// <summary>internal 构造以便单元测试派生子类替换取数逻辑；应用内仍走单例。</summary>
+    internal UpdateService()
     {
     }
 
@@ -73,14 +74,22 @@ public sealed class UpdateService
             return cached;
         }
 
-        using var response = await _checkClient.GetAsync(AppInfo.LatestReleaseApiUrl).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        var json = await FetchLatestReleaseJsonAsync().ConfigureAwait(false);
 
         var result = BuildCheckResult(AppInfo.CurrentVersion, json);
         _cachedResult = result;
         _cachedAtUtc = DateTimeOffset.UtcNow;
         return result;
+    }
+
+    /// <summary>
+    /// 请求 GitHub Releases latest 接口并返回 JSON 原文；虚方法便于单元测试替换为固定应答。
+    /// </summary>
+    internal virtual async Task<string> FetchLatestReleaseJsonAsync()
+    {
+        using var response = await _checkClient.GetAsync(AppInfo.LatestReleaseApiUrl).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
     }
 
     /// <summary>清除检测结果缓存（供单元测试使用；应用内正常路径靠 TTL 过期）。</summary>
