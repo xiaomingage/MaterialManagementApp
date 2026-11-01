@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using MaterialManagementApp.Common;
 using MaterialManagementApp.Pages;
 using MaterialManagementApp.Services;
@@ -8,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using WinRT.Interop;
 
 namespace MaterialManagementApp;
@@ -62,6 +65,10 @@ public sealed partial class MainWindow : Window
 
         UpdateClock();
         UpdateStatusBar();
+
+        // 左下角版本号（可点击检查更新）：文本统一取自 AppInfo.CurrentVersion，
+        // 版本号唯一来源是 csproj 的 <Version>，XAML 与代码里都不写死字面量
+        VersionRun.Text = $"v{AppInfo.CurrentVersion}";
 
         Closed += OnWindowClosed;
     }
@@ -397,6 +404,249 @@ public sealed partial class MainWindow : Window
     {
         var settings = SettingsService.Instance.Settings;
         ThemeHelper.ApplyMode(this, Content as FrameworkElement, settings);
+    }
+
+    // ==================== 版本更新（左下角版本号点击检查） ====================
+
+    /// <summary>防止更新弹窗重复弹出（连点版本号时 Tapped 会多次触发）。</summary>
+    private bool _isUpdateDialogOpen;
+
+    /// <summary>
+    /// 版本号点击入口：到 GitHub Releases 检查是否有新版本。
+    /// 检测请求在后台线程执行（await 释放 UI 线程），期间展示可取消的「检查中」弹窗；
+    /// 结果分流：已是最新 / 发现新版本（用户确认后才下载）/ 网络失败友好提示。
+    /// 缓存由 UpdateService 维护（5 分钟内复用上次结果，不重复请求）。
+    /// </summary>
+    private async void OnVersionTextTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (_isUpdateDialogOpen)
+        {
+            return;
+        }
+
+        _isUpdateDialogOpen = true;
+        try
+        {
+            var checking = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "检查更新",
+                Content = new StackPanel
+                {
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock { Text = "正在连接 GitHub 检查更新...", TextWrapping = TextWrapping.Wrap },
+                        new ProgressBar { IsIndeterminate = true }
+                    }
+                },
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close
+            };
+            var checkTask = checking.ShowAsync().AsTask();
+
+            UpdateCheckResult result;
+            try
+            {
+                result = await UpdateService.Instance.CheckForUpdateAsync();
+            }
+            catch (Exception ex)
+            {
+                // 网络 / 接口异常：给友好提示，绝不卡死或崩溃
+                _logger.LogWarning(ex, "检查更新失败（网络或接口异常）");
+                if (!checkTask.IsCompleted)
+                {
+                    checking.Hide();
+                    await checkTask;
+                    await ShowInfoDialogAsync("检查更新失败", "无法连接 GitHub，请检查网络后重试。");
+                }
+                return;
+            }
+
+            if (checkTask.IsCompleted)
+            {
+                // 用户在检测期间点了「取消」：结果丢弃，不打扰
+                return;
+            }
+
+            checking.Hide();
+            await checkTask;
+
+            if (!result.HasUpdate)
+            {
+                await ShowInfoDialogAsync("检查更新", $"当前已是最新版本（v{result.CurrentVersion}）。");
+                return;
+            }
+
+            await ShowUpdateDialogAsync(result);
+        }
+        catch (Exception ex)
+        {
+            // async void：弹窗流程任何意外只记录，不外抛崩溃
+            _logger.LogError(ex, "版本更新流程异常");
+        }
+        finally
+        {
+            _isUpdateDialogOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// 「发现新版本」弹窗：展示当前版本、最新版本与更新日志（release body）。
+    /// 点「立即更新」切换为下载进度模式（百分比实时刷新），「稍后再说」变「取消下载」，
+    /// 取消即中止请求并删除半截临时文件；下载完成后自动拉起安装向导并退出本程序。
+    /// </summary>
+    private async Task ShowUpdateDialogAsync(UpdateCheckResult result)
+    {
+        if (string.IsNullOrEmpty(result.SetupDownloadUrl))
+        {
+            // release 存在但没上传安装包附件：引导用户到 Releases 页面手动下载
+            await ShowInfoDialogAsync(
+                "无法自动更新",
+                $"最新版本 v{result.LatestVersion} 未附带安装包，请到 GitHub Releases 页面手动下载：\n" +
+                $"https://github.com/{AppInfo.RepoOwner}/{AppInfo.RepoName}/releases/latest");
+            return;
+        }
+
+        var notesText = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(result.ReleaseNotes) ? "（本次更新没有说明文字）" : result.ReleaseNotes,
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true
+        };
+        var notesScroll = new ScrollViewer
+        {
+            MaxHeight = 200,
+            Margin = new Thickness(0, 4, 0, 0),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = notesText
+        };
+        var percentText = new TextBlock { Text = "准备下载...", FontSize = 12, Opacity = 0.8 };
+        var bar = new ProgressBar { Minimum = 0, Maximum = 100 };
+        var progressPanel = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        progressPanel.Children.Add(percentText);
+        progressPanel.Children.Add(bar);
+
+        var infoPanel = new StackPanel { Spacing = 8, MaxWidth = 440 };
+        infoPanel.Children.Add(new TextBlock { Text = $"当前版本：v{result.CurrentVersion}" });
+        infoPanel.Children.Add(new TextBlock { Text = $"最新版本：v{result.LatestVersion}" });
+        infoPanel.Children.Add(notesScroll);
+        infoPanel.Children.Add(progressPanel);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = $"发现新版本 v{result.LatestVersion}",
+            Content = infoPanel,
+            PrimaryButtonText = "立即更新",
+            SecondaryButtonText = "稍后再说",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        Task showTask = dialog.ShowAsync().AsTask();
+
+        var downloading = false;
+        CancellationTokenSource? downloadCts = null;
+
+        dialog.PrimaryButtonClick += (sender, args) =>
+        {
+            // 阻止弹窗关闭并切换到下载模式；下载中再点「立即更新」无效
+            args.Cancel = true;
+            if (downloading)
+            {
+                return;
+            }
+
+            downloading = true;
+            dialog.Title = $"正在下载 v{result.LatestVersion}";
+            dialog.SecondaryButtonText = "取消下载";
+            dialog.IsPrimaryButtonEnabled = false;
+            notesScroll.Visibility = Visibility.Collapsed;
+            progressPanel.Visibility = Visibility.Visible;
+            _ = RunDownloadAsync();
+        };
+
+        dialog.SecondaryButtonClick += (_, _) =>
+        {
+            // 阶段一「稍后再说」：直接关闭；阶段二「取消下载」：中止请求并清理临时文件
+            if (downloading)
+            {
+                downloadCts?.Cancel();
+            }
+        };
+
+        async Task RunDownloadAsync()
+        {
+            downloadCts = new CancellationTokenSource();
+            var destPath = UpdateService.GetDownloadPath(result.LatestVersion);
+            var progress = new Progress<double>(p =>
+            {
+                var clamped = Math.Min(p, 100);
+                bar.Value = clamped;
+                percentText.Text = $"下载进度：{clamped:F0}%";
+            });
+            try
+            {
+                await UpdateService.Instance
+                    .DownloadSetupAsync(result.SetupDownloadUrl!, destPath, progress, downloadCts.Token)
+                    .ConfigureAwait(true);
+
+                // 下载完成：关弹窗 → 拉起安装向导 → 退出本程序。
+                // Inno 覆盖安装保留数据库与配置（安装包排除 *.db 且不清理旧目录），装完由用户手动打开新版。
+                dialog.Hide();
+                await showTask;
+                UpdateService.LaunchInstaller(destPath);
+                _forceExit = true;
+                Close();
+            }
+            catch (OperationCanceledException)
+            {
+                // 用户取消下载：删除半截临时文件，回到当前版本继续使用
+                TryDeleteFile(destPath);
+                dialog.Hide();
+                await showTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "下载更新包失败");
+                TryDeleteFile(destPath);
+                dialog.Hide();
+                await showTask;
+                await ShowInfoDialogAsync("下载失败", "更新包下载失败，请检查网络后重试。（未完成的下载文件已清理）");
+            }
+        }
+
+        await showTask;
+    }
+
+    /// <summary>尽力删除临时下载文件；删除失败不影响流程（TEMP 残留会被系统清理）。</summary>
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // 文件被短暂占用等场景忽略即可，不影响功能
+        }
+    }
+
+    /// <summary>简单信息弹窗（标题 + 文案 + 确定），复用主窗口 XamlRoot。</summary>
+    private async Task ShowInfoDialogAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = "确定",
+            DefaultButton = ContentDialogButton.Close
+        };
+        await dialog.ShowAsync();
     }
 
     /// <summary>窗口关闭时停止计时器、解除事件订阅并销毁托盘图标，避免泄漏。</summary>

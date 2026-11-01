@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:MaterialManagementApp"
+    xmlns:ui="using:MaterialManagementApp.Common"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
@@ -254,7 +255,7 @@
                 Background="{ThemeResource AppContentBackgroundBrush}" />
         </NavigationView>
 
-        <!-- 状态栏：左侧数据库概览，右侧实时日期时间。
+        <!-- 状态栏：左侧可点击版本号（检查更新入口），中段数据库概览，右侧实时日期时间。
              背景用 AppSurfaceBrush（随主题模式适配浅/深/亚克力），
              避免半透明 Layer 刷子在亚克力关闭的深色模式下叠黑底发白 -->
         <Border
@@ -264,19 +265,36 @@
             Background="{ThemeResource AppSurfaceBrush}">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
+                <!-- 版本号（左下角）：点击检查更新；悬浮手型光标 + 下划线样式，
+                     文本在构造函数按 AppInfo.CurrentVersion 填充（避免版本字面量散落 XAML） -->
+                <TextBlock
+                    x:Name="VersionTextBlock"
+                    Grid.Column="0"
+                    Margin="0,0,12,0"
+                    VerticalAlignment="Center"
+                    Style="{ThemeResource CaptionTextBlockStyle}"
+                    ui:CursorHelper.IsHandCursor="True"
+                    ToolTipService.ToolTip="点击检查更新"
+                    Tapped="OnVersionTextTapped">
+                    <Underline>
+                        <Run x:Name="VersionRun" Text="" />
+                    </Underline>
+                </TextBlock>
+
                 <TextBlock
                     x:Name="StatusText"
-                    Grid.Column="0"
+                    Grid.Column="1"
                     VerticalAlignment="Center"
                     Style="{ThemeResource CaptionTextBlockStyle}"
                     TextTrimming="CharacterEllipsis" />
                 <TextBlock
                     x:Name="ClockText"
-                    Grid.Column="1"
+                    Grid.Column="2"
                     Margin="12,0,0,0"
                     VerticalAlignment="Center"
                     Style="{ThemeResource CaptionTextBlockStyle}" />
