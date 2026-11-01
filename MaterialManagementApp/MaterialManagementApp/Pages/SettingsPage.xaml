@@ -200,34 +200,80 @@
                 </StackPanel>
             </Border>
 
-            <!-- 本地 AI 配置 -->
+            <!-- OCR 识别引擎配置 -->
             <Border
                 Style="{StaticResource StatCardBorderStyle}">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="本地 AI 配置" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock Text="识别引擎 (OCR)" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <!-- 单选框无法直接双向绑定字符串，沿用 ThemeIndex 模式：索引在 VM 内与 OcrEngineMode 双向联动 -->
+                    <RadioButtons SelectedIndex="{x:Bind ViewModel.OcrEngineIndex, Mode=TwoWay}">
+                        <RadioButton AutomationProperties.Name="本地离线识别">
+                            <StackPanel Orientation="Vertical" Spacing="2">
+                                <TextBlock Text="本地离线识别 (Paddle/Ollama)" />
+                                <TextBlock
+                                    Text="免费、断网可用"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton AutomationProperties.Name="在线 AI 识别">
+                            <StackPanel Orientation="Vertical" Spacing="2">
+                                <TextBlock Text="在线 AI 识别" />
+                                <TextBlock
+                                    Text="需联网、准确率极高、按量计费"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            </StackPanel>
+                        </RadioButton>
+                    </RadioButtons>
+                </StackPanel>
+            </Border>
+
+            <!-- AI 大模型接入配置 -->
+            <Border
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="AI 大模型接入" Style="{ThemeResource SubtitleTextBlockStyle}" />
                     <TextBlock
-                        Text="配置本机 Ollama 后，导入单据时优先调用本地视觉模型识别图片；未配置模型或连接失败时自动回退系统 OCR。所有识别均在本机完成，数据不上传云端。"
+                        Text="配置后，导入复杂单据时将优先调用 AI 识别。API Key 仅保存在本地。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
-                    <TextBox Header="Ollama 服务地址" Text="{x:Bind ViewModel.OllamaUrl, Mode=TwoWay}" />
-                    <!-- IsEditable 的 ComboBox 既可下拉选择预置模型，也可直接手动输入其它模型名 -->
+                    <!-- 切换服务商时 VM 会自动带入该服务商的默认 Base URL 与模型名（Ollama / 自定义除外） -->
                     <ComboBox
-                        Header="模型名称（下拉选择或手动输入）"
+                        Header="AI 服务商"
                         HorizontalAlignment="Stretch"
-                        IsEditable="True"
-                        ItemsSource="{x:Bind ViewModel.OllamaModelOptions, Mode=OneWay}"
-                        Text="{x:Bind ViewModel.OllamaModel, Mode=TwoWay}" />
+                        ItemsSource="{x:Bind ViewModel.AiProviderOptions, Mode=OneTime}"
+                        SelectedItem="{x:Bind ViewModel.AiProvider, Mode=TwoWay}" />
+                    <!-- 仅选择 Ollama 时显示本机服务配置，其余服务商 Collapsed 保持界面整洁 -->
+                    <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.OllamaFieldsVisibility, Mode=OneWay}">
+                        <TextBox Header="Ollama 服务地址" Text="{x:Bind ViewModel.OllamaUrl, Mode=TwoWay}" />
+                        <!-- IsEditable 的 ComboBox 既可下拉选择预置模型，也可直接手动输入其它模型名 -->
+                        <ComboBox
+                            Header="Ollama 模型名称（下拉选择或手动输入）"
+                            HorizontalAlignment="Stretch"
+                            IsEditable="True"
+                            ItemsSource="{x:Bind ViewModel.OllamaModelOptions, Mode=OneWay}"
+                            Text="{x:Bind ViewModel.OllamaModel, Mode=TwoWay}" />
+                    </StackPanel>
+                    <TextBox Header="API Base URL" Text="{x:Bind ViewModel.AiBaseUrl, Mode=TwoWay}" />
+                    <PasswordBox Header="API Key" Password="{x:Bind ViewModel.AiApiKey, Mode=TwoWay}" />
+                    <TextBlock
+                        Text="API Key 仅保存在本地配置文件中，绝不会上传到任何服务器"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBox Header="模型名称" Text="{x:Bind ViewModel.AiModelName, Mode=TwoWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="测试连接" Command="{x:Bind ViewModel.TestOllamaConnectionCommand}" />
+                        <Button Content="测试连接" Command="{x:Bind ViewModel.TestAiConnectionCommand}" />
                         <Button
-                            Content="保存"
+                            Content="保存配置"
                             Command="{x:Bind ViewModel.SaveCommand}"
                             Style="{ThemeResource AccentButtonStyle}" />
                         <Button Content="取消" Command="{x:Bind ViewModel.CancelCommand}" />
                     </StackPanel>
                     <TextBlock
-                        Text="{x:Bind ViewModel.OllamaStatus, Mode=OneWay}"
+                        Text="{x:Bind ViewModel.AiStatus, Mode=OneWay}"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
@@ -260,7 +306,7 @@
                             Value="{Binding BackupRetentionCount, Mode=TwoWay}" />
                     </StackPanel>
                     <TextBlock
-                        Text="备份保留份数修改后需点击「本地 AI 配置」卡片中的「保存」按钮才会生效。"
+                        Text="备份保留份数修改后需点击「AI 大模型接入」卡片中的「保存配置」或页面底部「保存」按钮才会生效。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                         TextWrapping="Wrap" />

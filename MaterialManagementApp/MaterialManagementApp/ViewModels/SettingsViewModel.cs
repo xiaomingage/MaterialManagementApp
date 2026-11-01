@@ -4,6 +4,9 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -54,6 +57,23 @@ public partial class SettingsViewModel : ObservableObject
         "qwen2.5-coder:7b"
     };
 
+    /// <summary>AI 服务商下拉框预置选项，顺序与设置页 ComboBoxItem 一致；「自定义」不自动填充地址。</summary>
+    public string[] AiProviderOptions { get; } = { "DeepSeek", "Kimi", "通义千问", "Ollama", "自定义" };
+
+    /// <summary>各在线服务商的默认服务地址与推荐模型，切换服务商时自动带入，减少手工输入。</summary>
+    private static readonly Dictionary<string, (string BaseUrl, string ModelName)> _aiProviderDefaults = new()
+    {
+        ["DeepSeek"] = ("https://api.deepseek.com", "deepseek-chat"),
+        ["Kimi"] = ("https://api.moonshot.cn/v1", "moonshot-v1-8k-vision-preview"),
+        ["通义千问"] = ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max")
+    };
+
+    /// <summary>在线 AI 连接测试专用客户端；静态复用避免频繁建连，短超时快速失败。</summary>
+    private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>构造与 Load 期间置为 true，避免赋值触发 OnAiProviderChanged 把磁盘上已保存的配置覆盖为默认值。</summary>
+    private bool _suppressProviderAutoFill = true;
+
     /// <summary>
     /// 构造函数。partial property 不允许字段初始化器，
     /// 因此把默认值集中在这里赋值，随后立即从配置服务载入真实值。
@@ -75,7 +95,12 @@ public partial class SettingsViewModel : ObservableObject
         DefaultDatabaseFolder = string.Empty;
         OllamaUrl = "http://localhost:11434";
         OllamaModel = string.Empty;
-        OllamaStatus = string.Empty;
+        OcrEngineMode = "LocalOllama";
+        AiProvider = "DeepSeek";
+        AiBaseUrl = string.Empty;
+        AiApiKey = string.Empty;
+        AiModelName = string.Empty;
+        AiStatus = string.Empty;
         StatusMessage = string.Empty;
         NewDeptName = string.Empty;
         NewPhaseName = string.Empty;
@@ -177,9 +202,40 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _ollamaModel;
 
-    /// <summary>本地 AI 板块的独立提示文本（测试连接结果），与全局 StatusMessage 分开避免互相覆盖。</summary>
+    /// <summary>OCR 引擎模式：LocalOllama（本地 Ollama）/ LocalPaddle（本地 Paddle）/ OnlineAi（在线 AI），其他值回退系统 OCR。</summary>
     [ObservableProperty]
-    private string _ollamaStatus;
+    private string _ocrEngineMode;
+
+    /// <summary>OCR 引擎单选框索引：0 本地离线识别 / 1 在线 AI 识别；与 OcrEngineMode 在 VM 内双向联动。</summary>
+    [ObservableProperty]
+    private int _ocrEngineIndex;
+
+    /// <summary>AI 服务商：DeepSeek / Kimi / 通义千问 / Ollama / 自定义。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OllamaFieldsVisibility))]
+    private string _aiProvider;
+
+    /// <summary>在线 AI 服务地址（Base URL）；选择 Ollama 时使用独立的 OllamaUrl 字段。</summary>
+    [ObservableProperty]
+    private string _aiBaseUrl;
+
+    /// <summary>在线 AI 的 API Key；选择 Ollama 时不需要填写。</summary>
+    [ObservableProperty]
+    private string _aiApiKey;
+
+    /// <summary>在线 AI 使用的模型名称；选择 Ollama 时使用独立的 OllamaModel 字段。</summary>
+    [ObservableProperty]
+    private string _aiModelName;
+
+    /// <summary>AI 板块的独立提示文本（测试连接结果），与全局 StatusMessage 分开避免互相覆盖。</summary>
+    [ObservableProperty]
+    private string _aiStatus;
+
+    /// <summary>仅在选择 Ollama 服务商时显示本机服务地址与模型配置区块，其余服务商隐藏以保持界面整洁。</summary>
+    public Visibility OllamaFieldsVisibility =>
+        string.Equals(AiProvider, "Ollama", StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
     /// <summary>数据库备份保留份数；保存设置时写回配置文件。</summary>
     [ObservableProperty]
@@ -220,8 +276,13 @@ public partial class SettingsViewModel : ObservableObject
 
             OllamaUrl = string.IsNullOrWhiteSpace(settings.OllamaUrl) ? "http://localhost:11434" : settings.OllamaUrl;
             OllamaModel = settings.OllamaModel ?? string.Empty;
-            OllamaStatus = settings.IsLocalAiConfigured
-                ? $"已启用本地 AI：识别单据时优先调用 {OllamaModel}，失败自动回退系统 OCR。"
+            OcrEngineMode = string.IsNullOrWhiteSpace(settings.OcrEngineMode) ? "LocalOllama" : settings.OcrEngineMode;
+            AiProvider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "DeepSeek" : settings.AiProvider;
+            AiBaseUrl = settings.AiBaseUrl ?? string.Empty;
+            AiApiKey = settings.AiApiKey ?? string.Empty;
+            AiModelName = settings.AiModelName ?? string.Empty;
+            AiStatus = settings.IsAiConfigured
+                ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
                 : "未配置模型，识别单据时将使用系统 OCR。";
 
             BackupRetentionCount = settings.BackupRetentionCount;
@@ -234,6 +295,11 @@ public partial class SettingsViewModel : ObservableObject
         {
             _logger.LogError(ex, "加载应用设置数据失败。");
             StatusMessage = $"读取设置失败：{ex.Message}";
+        }
+        finally
+        {
+            // 加载完成后才允许「切换服务商自动填充」，避免把磁盘配置覆盖为默认值
+            _suppressProviderAutoFill = false;
         }
     }
 
@@ -272,6 +338,12 @@ public partial class SettingsViewModel : ObservableObject
             settings.OllamaUrl = string.IsNullOrWhiteSpace(OllamaUrl) ? "http://localhost:11434" : OllamaUrl.Trim();
             settings.OllamaModel = (OllamaModel ?? string.Empty).Trim();
 
+            settings.OcrEngineMode = string.IsNullOrWhiteSpace(OcrEngineMode) ? "LocalOllama" : OcrEngineMode.Trim();
+            settings.AiProvider = string.IsNullOrWhiteSpace(AiProvider) ? "DeepSeek" : AiProvider.Trim();
+            settings.AiBaseUrl = (AiBaseUrl ?? string.Empty).Trim();
+            settings.AiApiKey = (AiApiKey ?? string.Empty).Trim();
+            settings.AiModelName = (AiModelName ?? string.Empty).Trim();
+
             settings.BackupRetentionCount = Math.Max(1, BackupRetentionCount);
 
             SettingsService.Instance.Save();
@@ -279,8 +351,8 @@ public partial class SettingsViewModel : ObservableObject
             // 主题必须立刻反映到界面，否则用户要重启才能看到效果
             ApplyTheme(settings.ThemeMode);
 
-            OllamaStatus = settings.IsLocalAiConfigured
-                ? $"已启用本地 AI：识别单据时优先调用 {settings.OllamaModel}，失败自动回退系统 OCR。"
+            AiStatus = settings.IsAiConfigured
+                ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? settings.OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
                 : "未配置模型，识别单据时将使用系统 OCR。";
 
             StatusMessage = "设置已保存。";
@@ -320,49 +392,95 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 测试本地 AI 连接：读取 Ollama 的模型列表，既能验证连通性，
-    /// 又能把服务端实际安装的模型补进下拉框，减少用户手工输入模型名的出错概率。
+    /// 测试 AI 连接：选择 Ollama 时沿用原有「读取模型列表」逻辑（顺带补全下拉候选）；
+    /// 在线服务商则向 {BaseUrl}/models 发送极简 GET 请求验证密钥有效性（DeepSeek / Kimi /
+    /// 通义千问等 OpenAI 兼容接口均支持该端点），结果输出到 AiStatus。
     /// </summary>
     [RelayCommand]
-    private async Task TestOllamaConnectionAsync()
+    private async Task TestAiConnectionAsync()
     {
-        var url = string.IsNullOrWhiteSpace(OllamaUrl) ? "http://localhost:11434" : OllamaUrl.Trim();
+        // ==================== 本地 Ollama ====================
+        if (string.Equals(AiProvider, "Ollama", StringComparison.OrdinalIgnoreCase))
+        {
+            var url = string.IsNullOrWhiteSpace(OllamaUrl) ? "http://localhost:11434" : OllamaUrl.Trim();
 
-        OllamaStatus = $"正在测试连接 {url} …";
+            AiStatus = $"正在测试连接 {url} …";
+            try
+            {
+                var models = await OllamaService.Instance.ListModelsAsync(url);
+
+                if (models.Count == 0)
+                {
+                    AiStatus = $"连接成功（{url}），但服务端还没有任何模型，请先执行 ollama pull 拉取模型。";
+                    return;
+                }
+
+                // 把服务端实际存在的模型并入候选列表（去重），方便用户直接在下拉框中选择
+                foreach (var model in models)
+                {
+                    if (!OllamaModelOptions.Contains(model, StringComparer.OrdinalIgnoreCase))
+                    {
+                        OllamaModelOptions.Add(model);
+                    }
+                }
+
+                // 尚未选择模型时，自动带入服务端第一个可用模型，避免用户面对空下拉框
+                if (string.IsNullOrWhiteSpace(OllamaModel))
+                {
+                    OllamaModel = models[0];
+                }
+
+                var preview = string.Join("、", models.Take(8));
+                var suffix = models.Count > 8 ? $" 等 {models.Count} 个" : string.Empty;
+                AiStatus = $"连接成功（{url}）。可用模型：{preview}{suffix}";
+                _logger.LogInformation("本地 AI 连接测试成功：{Url}，模型数 {Count}。", url, models.Count);
+            }
+            catch (Exception ex)
+            {
+                AiStatus = $"连接失败：{ex.Message}";
+                _logger.LogWarning(ex, "本地 AI 连接测试失败：{Url}。", url);
+            }
+
+            return;
+        }
+
+        // ==================== 在线服务商 ====================
+        var baseUrl = (AiBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        var apiKey = (AiApiKey ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            AiStatus = "请先填写服务地址（Base URL）和 API Key 再测试。";
+            return;
+        }
+
+        AiStatus = $"正在测试连接 {baseUrl} …";
         try
         {
-            var models = await OllamaService.Instance.ListModelsAsync(url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/models");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            if (models.Count == 0)
+            using var response = await _httpClient.SendAsync(request);
+            if (response.IsSuccessStatusCode)
             {
-                OllamaStatus = $"连接成功（{url}），但服务端还没有任何模型，请先执行 ollama pull 拉取模型。";
-                return;
+                AiStatus = $"连接成功（{baseUrl}），API Key 有效。";
+                _logger.LogInformation("在线 AI 连接测试成功：{BaseUrl}。", baseUrl);
             }
-
-            // 把服务端实际存在的模型并入候选列表（去重），方便用户直接在下拉框中选择
-            foreach (var model in models)
+            else if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                if (!OllamaModelOptions.Contains(model, StringComparer.OrdinalIgnoreCase))
-                {
-                    OllamaModelOptions.Add(model);
-                }
+                AiStatus = $"连接失败：API Key 无效或无权限（HTTP {(int)response.StatusCode}）。";
+                _logger.LogWarning("在线 AI 密钥校验失败：{BaseUrl}，HTTP {Code}。", baseUrl, (int)response.StatusCode);
             }
-
-            // 尚未选择模型时，自动带入服务端第一个可用模型，避免用户面对空下拉框
-            if (string.IsNullOrWhiteSpace(OllamaModel))
+            else
             {
-                OllamaModel = models[0];
+                AiStatus = $"连接失败：服务返回 HTTP {(int)response.StatusCode} {response.ReasonPhrase}。";
+                _logger.LogWarning("在线 AI 连接测试失败：{BaseUrl}，HTTP {Code}。", baseUrl, (int)response.StatusCode);
             }
-
-            var preview = string.Join("、", models.Take(8));
-            var suffix = models.Count > 8 ? $" 等 {models.Count} 个" : string.Empty;
-            OllamaStatus = $"连接成功（{url}）。可用模型：{preview}{suffix}";
-            _logger.LogInformation("本地 AI 连接测试成功：{Url}，模型数 {Count}。", url, models.Count);
         }
         catch (Exception ex)
         {
-            OllamaStatus = $"连接失败：{ex.Message}";
-            _logger.LogWarning(ex, "本地 AI 连接测试失败：{Url}。", url);
+            AiStatus = $"连接失败：{ex.Message}";
+            _logger.LogWarning(ex, "在线 AI 连接测试失败：{BaseUrl}。", baseUrl);
         }
     }
 
@@ -443,6 +561,43 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnAccentColorChanged(string value)
     {
         ThemeHelper.ApplyAccentColor(value);
+    }
+
+    /// <summary>OCR 引擎单选框切换：把选中索引翻译为 OcrEngineMode 存储值。</summary>
+    partial void OnOcrEngineIndexChanged(int value)
+    {
+        // 本地离线档保留当前具体引擎（LocalOllama / LocalPaddle），从未设置过时默认 Ollama
+        OcrEngineMode = value == 1
+            ? "OnlineAi"
+            : OcrEngineMode is "LocalOllama" or "LocalPaddle"
+                ? OcrEngineMode
+                : "LocalOllama";
+    }
+
+    /// <summary>OcrEngineMode 变化时回写单选框索引；值未变时生成代码自动去重，不会递归。</summary>
+    partial void OnOcrEngineModeChanged(string value)
+    {
+        OcrEngineIndex = string.Equals(value, "OnlineAi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+    }
+
+    /// <summary>
+    /// 切换 AI 服务商时自动带入该服务商的默认服务地址与推荐模型，减少手工输入。
+    /// Ollama 使用独立的 OllamaUrl / OllamaModel 字段、「自定义」完全保留用户输入，均不做自动填充。
+    /// </summary>
+    partial void OnAiProviderChanged(string value)
+    {
+        // Load / 构造期间的赋值不触发自动填充，否则会把用户已保存的配置覆盖为默认值
+        if (_suppressProviderAutoFill || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (_aiProviderDefaults.TryGetValue(value, out var defaults))
+        {
+            AiBaseUrl = defaults.BaseUrl;
+            AiModelName = defaults.ModelName;
+            AiStatus = $"已带入 {value} 默认服务地址与模型，请填写 API Key 后测试连接。";
+        }
     }
 
     // ==================== 「项目部 / 期数」维度管理 ====================

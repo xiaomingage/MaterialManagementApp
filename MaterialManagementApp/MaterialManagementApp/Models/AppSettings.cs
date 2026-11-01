@@ -1,5 +1,6 @@
 namespace MaterialManagementApp.Models;
 
+using System;
 using System.Text.Json.Serialization;
 
 /// <summary>
@@ -48,15 +49,43 @@ public sealed class AppSettings
     /// <summary>本地 AI 使用的模型名称；为空表示未配置本地 AI，OCR 直接走系统识别。</summary>
     public string OllamaModel { get; set; } = string.Empty;
 
+    /// <summary>
+    /// OCR 引擎模式，记录用户选择的 OCR 引擎：
+    /// LocalOllama（本地 Ollama AI 识别）/ LocalPaddle（本地 PaddleOCR 识别）/ OnlineAi（在线 AI 识别）；其他值回退系统 OCR。
+    /// </summary>
+    public string OcrEngineMode { get; set; } = "LocalOllama";
+
+    /// <summary>
+    /// AI 服务商：Ollama（本地）或 DeepSeek 等在线服务商。
+    /// Ollama 视为 AiProvider 的一个选项，选择 Ollama 时读取 OllamaUrl / OllamaModel，否则读取在线 AI 配置。
+    /// </summary>
+    public string AiProvider { get; set; } = "DeepSeek";
+
+    /// <summary>在线 AI 服务地址（Base URL，如 https://api.deepseek.com）；本地 Ollama 模式下不使用。</summary>
+    public string AiBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>在线 AI 的 API Key；本地 Ollama 模式下不使用。</summary>
+    public string AiApiKey { get; set; } = string.Empty;
+
+    /// <summary>在线 AI 使用的模型名称（如 deepseek-chat）；本地 Ollama 模式下不使用。</summary>
+    public string AiModelName { get; set; } = string.Empty;
+
     /// <summary>数据库备份保留份数，超出后自动清理最旧的备份，最小保留 1 份。</summary>
     public int BackupRetentionCount { get; set; } = 15;
 
+    /// <summary>当前 AI 服务商是否为本地 Ollama；否则视为在线 AI 服务商。</summary>
+    [JsonIgnore]
+    public bool IsOllamaProvider =>
+        string.Equals(AiProvider, "Ollama", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
-    /// 是否已配置可用的本地 AI（地址与模型名都不为空）。
-    /// OCR 识别优先走本地 AI，未配置时回退系统 OCR。
+    /// 是否已配置可用的 AI 服务：
+    /// 选择本地 Ollama 时要求 OllamaUrl 与 OllamaModel 不为空；选择在线 AI 时要求 AiBaseUrl 与 AiApiKey 不为空。
     /// 派生属性不写回配置文件，避免 settings.json 里出现冗余字段。
     /// </summary>
     [JsonIgnore]
-    public bool IsLocalAiConfigured =>
-        !string.IsNullOrWhiteSpace(OllamaUrl) && !string.IsNullOrWhiteSpace(OllamaModel);
+    public bool IsAiConfigured =>
+        IsOllamaProvider
+            ? !string.IsNullOrWhiteSpace(OllamaUrl) && !string.IsNullOrWhiteSpace(OllamaModel)
+            : !string.IsNullOrWhiteSpace(AiBaseUrl) && !string.IsNullOrWhiteSpace(AiApiKey);
 }
