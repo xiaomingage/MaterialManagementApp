@@ -15,6 +15,7 @@ using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
+using Windows.Storage.Pickers;
 
 namespace MaterialManagementApp.ViewModels;
 
@@ -87,7 +88,8 @@ public partial class SettingsViewModel : ObservableObject
         DefaultHandler = string.Empty;
         ThemeIndex = 3;
         ThemeHint = string.Empty;
-        MinimizeToTray = false;
+        CloseAction = "Ask";
+        CloseActionIndex = 0;
         AccentColor = "#2563EB";
         DatabasePath = string.Empty;
         SettingsFilePath = string.Empty;
@@ -170,9 +172,16 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _themeHint;
 
-    /// <summary>关闭窗口时是否最小化到托盘后台运行；保存后由主窗口即时生效。</summary>
+    /// <summary>关闭窗口行为下拉候选，顺序必须与 XAML 中 ComboBoxItem 一致。</summary>
+    public string[] CloseActionOptions { get; } = { "每次询问", "最小化到托盘", "直接退出" };
+
+    /// <summary>关闭窗口行为（Ask / MinimizeToTray / Exit），与下拉框索引联动；保存后由主窗口在点 X 时生效。</summary>
     [ObservableProperty]
-    private bool _minimizeToTray;
+    private string _closeAction = "Ask";
+
+    /// <summary>关闭窗口行为下拉框选中索引（0 询问 / 1 托盘 / 2 退出）。</summary>
+    [ObservableProperty]
+    private int _closeActionIndex;
 
     /// <summary>当前强调色十六进制值（如 #2563EB）。</summary>
     [ObservableProperty]
@@ -266,7 +275,7 @@ public partial class SettingsViewModel : ObservableObject
             var themeIndex = Array.IndexOf(_themeKeys, settings.ThemeMode);
             ThemeIndex = themeIndex >= 0 ? themeIndex : 3;
             ThemeHint = ThemeHelper.ComputeHint(settings) ?? string.Empty;
-            MinimizeToTray = settings.MinimizeToTray;
+            CloseAction = settings.CloseAction;
             AccentColor = string.IsNullOrWhiteSpace(settings.AccentColor) ? "#2563EB" : settings.AccentColor;
 
             DatabasePath = DatabaseService.Instance.DatabasePath;
@@ -331,8 +340,13 @@ public partial class SettingsViewModel : ObservableObject
                 settings.BaseTheme = settings.ThemeMode;
             }
 
-            settings.MinimizeToTray = MinimizeToTray;
+            settings.CloseAction = CloseAction is "Ask" or "MinimizeToTray" or "Exit" ? CloseAction : "Ask";
             settings.AccentColor = string.IsNullOrWhiteSpace(AccentColor) ? "#2563EB" : AccentColor.Trim();
+
+            // 数据库保存位置：为空表示使用默认位置（程序目录\Data\MaterialSystem.db），修改后重启程序生效
+            var newDatabasePath = (ConfiguredDatabasePath ?? string.Empty).Trim();
+            var databasePathChanged = !string.Equals(newDatabasePath, settings.DatabasePath, StringComparison.OrdinalIgnoreCase);
+            settings.DatabasePath = newDatabasePath;
 
             // 地址留空会被视为「未配置」，因此这里补回默认本机地址，保证回退逻辑判断稳定
             settings.OllamaUrl = string.IsNullOrWhiteSpace(OllamaUrl) ? "http://localhost:11434" : OllamaUrl.Trim();
@@ -355,7 +369,9 @@ public partial class SettingsViewModel : ObservableObject
                 ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? settings.OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
                 : "未配置模型，识别单据时将使用系统 OCR。";
 
-            StatusMessage = "设置已保存。";
+            StatusMessage = databasePathChanged
+                ? "设置已保存。数据库保存位置已修改，重启程序后生效。"
+                : "设置已保存。";
             _logger.LogInformation("应用设置已保存。");
         }
         catch (Exception ex)
@@ -389,6 +405,36 @@ public partial class SettingsViewModel : ObservableObject
     {
         Load();
         StatusMessage = "已取消未保存的修改。";
+    }
+
+    /// <summary>
+    /// 弹出文件选择器选择数据库文件位置，选中的完整路径写入「数据库保存位置」输入框；
+    /// 仍需点击「保存」写入配置，重启程序后在新位置生效。
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseDatabasePathAsync()
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+            };
+            picker.FileTypeFilter.Add(".db");
+            WinRT.Interop.InitializeWithWindow.Initialize(
+                picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow!));
+
+            var file = await picker.PickSingleFileAsync();
+            if (file is not null)
+            {
+                ConfiguredDatabasePath = file.Path;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "选择数据库文件失败。");
+            StatusMessage = $"选择数据库文件失败：{ex.Message}";
+        }
     }
 
     /// <summary>
@@ -578,6 +624,28 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnOcrEngineModeChanged(string value)
     {
         OcrEngineIndex = string.Equals(value, "OnlineAi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+    }
+
+    /// <summary>关闭行为下拉框切换：把选中索引翻译为 CloseAction 存储值。</summary>
+    partial void OnCloseActionIndexChanged(int value)
+    {
+        CloseAction = value switch
+        {
+            1 => "MinimizeToTray",
+            2 => "Exit",
+            _ => "Ask"
+        };
+    }
+
+    /// <summary>CloseAction 变化时回写下拉框索引；值未变时生成代码自动去重，不会递归。</summary>
+    partial void OnCloseActionChanged(string value)
+    {
+        CloseActionIndex = value switch
+        {
+            "MinimizeToTray" => 1,
+            "Exit" => 2,
+            _ => 0
+        };
     }
 
     /// <summary>

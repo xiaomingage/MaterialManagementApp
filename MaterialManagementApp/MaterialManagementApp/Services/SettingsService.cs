@@ -103,13 +103,44 @@ public sealed class SettingsService
                 Directory.CreateDirectory(directory);
             }
 
-            // 先写临时文件再原子替换：避免写入途中断电导致配置文件被截断成无效 JSON
-            var tempPath = SettingsFilePath + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(Settings, _jsonOptions));
-            File.Move(tempPath, SettingsFilePath, overwrite: true);
+            // 先写临时文件再原子替换：避免写入途中断电导致配置文件被截断成无效 JSON。
+            // 临时名带唯一后缀：残留的旧 .tmp 被杀毒/索引器短暂占用时不会顶撞本次保存；
+            // 保存结束后无论成败都清掉本次临时文件，目录不留垃圾。
+            var tempPath = $"{SettingsFilePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllText(tempPath, JsonSerializer.Serialize(Settings, _jsonOptions));
+                File.Move(tempPath, SettingsFilePath, overwrite: true);
+            }
+            catch (IOException)
+            {
+                TryDelete(tempPath);
+                throw;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                TryDelete(tempPath);
+                throw;
+            }
         }
 
         SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>尽力删除临时文件；删除失败（仍被占用）不影响主流程。</summary>
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // 忽略：临时文件最多残留一个，下次保存使用新的唯一名称不会冲突
+        }
     }
 
     /// <summary>恢复出厂默认值并立即落盘，随后触发 <see cref="SettingsChanged"/>。</summary>
@@ -149,6 +180,14 @@ public sealed class SettingsService
         {
             settings.BaseTheme = "Light";
         }
+
+        // 关闭行为校验与迁移：旧版仅有 MinimizeToTray 布尔开关，true→托盘后台，false→恢复默认询问；
+        // 同步回写旧字段保持序列化一致，非法值一律回退 Ask
+        if (settings.CloseAction is not ("Ask" or "MinimizeToTray" or "Exit"))
+        {
+            settings.CloseAction = settings.MinimizeToTray ? "MinimizeToTray" : "Ask";
+        }
+        settings.MinimizeToTray = string.Equals(settings.CloseAction, "MinimizeToTray", StringComparison.OrdinalIgnoreCase);
 
         // 旧版配置可能缺少新增字段，反序列化后为 null，这里统一补空串避免后续 Trim 空引用
         settings.ProjectName ??= string.Empty;

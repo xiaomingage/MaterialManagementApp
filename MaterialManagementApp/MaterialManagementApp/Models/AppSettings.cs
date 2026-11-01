@@ -34,8 +34,14 @@ public sealed class AppSettings
     /// <summary>透明毛玻璃模式使用的基底主题（记住最近一次选择的浅色/深色），取值 Light / Dark。</summary>
     public string BaseTheme { get; set; } = "Light";
 
-    /// <summary>关闭窗口时是否最小化到托盘后台运行；为 false 时点击关闭按钮直接退出程序。</summary>
+    /// <summary>旧版字段（bool 开关），仅供旧配置迁移读取；新逻辑以 <see cref="CloseAction"/> 为准。</summary>
     public bool MinimizeToTray { get; set; }
+
+    /// <summary>
+    /// 点击窗口关闭按钮（X）时的行为：Ask（每次弹窗询问）/ MinimizeToTray（最小化到托盘后台）/ Exit（直接退出）。
+    /// 在关闭确认弹窗中勾选「记住我的选择」后会写回该字段，之后不再弹窗。
+    /// </summary>
+    public string CloseAction { get; set; } = "Ask";
 
     /// <summary>强调色（十六进制，如 #2563EB），为空时使用系统默认强调色。</summary>
     public string AccentColor { get; set; } = "#2563EB";

@@ -16,6 +16,8 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
+using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
@@ -35,11 +37,140 @@ namespace MaterialManagementApp
 
         private Window? _window;
 
+        /// <summary>单实例互斥体名称（Local\ 仅本会话，无需跨用户会话唯一）。</summary>
+        private const string SingleInstanceMutexName = @"Local\MaterialManagementApp_SingleInstance_8F3C2A1E-5B6D-4E7A-9C1F-2D3A4B5C6D7E";
+
+        /// <summary>第二次实例用于唤醒已有实例主窗口的事件名称。</summary>
+        private const string ActivateEventName = @"Local\MaterialManagementApp_Activate_8F3C2A1E-5B6D-4E7A-9C1F-2D3A4B5C6D7E";
+
+        private static Mutex? _singleInstanceMutex;
+        private static EventWaitHandle? _activateEvent;
+        private static CancellationTokenSource? _activateWatchCts;
+
+        /// <summary>UI 线程调度器：OnLaunched（UI 线程）捕获，供后台唤醒监听线程回投主窗口操作。</summary>
+        private static Microsoft.UI.Dispatching.DispatcherQueue? _uiDispatcherQueue;
+
         /// <summary>
         /// 当前应用的主窗口实例。文件选择器（FileOpenPicker）等 Win32 对话框 API
         /// 需要窗口句柄，页面通过该属性获取。
         /// </summary>
         public static Window? MainWindow { get; private set; }
+
+        /// <summary>
+        /// 单实例闸门：程序全生命周期只允许一个实例运行。
+        /// 首个实例持有命名 Mutex 并监听唤醒事件；后续实例发现 Mutex 已被占用时，
+        /// 通过命名事件通知已有实例唤起主窗口（含从托盘还原），然后立即退出自身，
+        /// 保证「程序保持唯一性」且用户始终能看到正在运行的窗口。
+        /// </summary>
+        /// <returns>true 表示本实例是唯一实例并已开始监听；false 表示已有实例在运行。</returns>
+        private bool AcquireSingleInstance()
+        {
+            _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
+            if (createdNew)
+            {
+                _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+                _uiDispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+                _activateWatchCts = new CancellationTokenSource();
+                _ = Task.Run(() => WatchActivateRequests(_activateWatchCts.Token));
+                _logger.LogInformation("单实例闸门获取成功，本进程为唯一运行实例。");
+                return true;
+            }
+
+            // 已有实例在运行：通知其唤起主窗口后退出当前实例
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            try
+            {
+                using var existing = EventWaitHandle.OpenExisting(ActivateEventName);
+                existing.Set();
+                _logger.LogInformation("检测到程序已在运行，已通知已有实例唤起主窗口。");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("通知已有实例唤起窗口失败：{Message}", ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>后台监听唤醒事件：收到信号即把主窗口显示并前置（托盘隐藏状态同样适用）。</summary>
+        private void WatchActivateRequests(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                bool signaled;
+                try
+                {
+                    signaled = _activateEvent!.WaitOne();
+                }
+                catch
+                {
+                    // 事件句柄已随应用退出被释放（ObjectDisposedException 等），结束监听线程
+                    return;
+                }
+
+                if (!signaled)
+                {
+                    return;
+                }
+
+                try
+                {
+                    _uiDispatcherQueue?.TryEnqueue(() =>
+                    {
+                        if (_window is MainWindow main)
+                        {
+                            main.ShowFromTray();
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("唤起主窗口失败：{Message}", ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 应用退出时释放单实例资源：停止唤醒监听、释放事件句柄与互斥体，
+        /// 保证进程结束后不留任何与程序相关的内核对象或驻留线程。
+        /// </summary>
+        private void ShutdownSingleInstanceGuard()
+        {
+            try
+            {
+                _activateWatchCts?.Cancel();
+            }
+            catch { }
+
+            try
+            {
+                _activateEvent?.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                _activateWatchCts?.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                if (_singleInstanceMutex is not null)
+                {
+                    _singleInstanceMutex.ReleaseMutex();
+                    _singleInstanceMutex.Dispose();
+                }
+            }
+            catch
+            {
+                // 互斥体释放失败（如线程所有权不符）不影响退出，进程结束后内核自动回收
+            }
+
+            _activateEvent = null;
+            _activateWatchCts = null;
+            _singleInstanceMutex = null;
+        }
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -93,6 +224,13 @@ namespace MaterialManagementApp
         /// <param name="args">Details about the launch request and process.</param>
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            // 单实例闸门：已有实例在运行时，通知其唤起主窗口后直接退出本实例
+            if (!AcquireSingleInstance())
+            {
+                Exit();
+                return;
+            }
+
             // 生命周期日志带版本号：线上排障时可直接对齐日志与安装包版本
             _logger.LogInformation("应用启动中，版本=v{Version}。", typeof(App).Assembly.GetName().Version);
 
@@ -128,9 +266,10 @@ namespace MaterialManagementApp
 
             _window.Activate();
 
-            // 正常退出时冲刷缓冲，确保最后的日志落盘
+            // 正常退出时释放单实例资源并冲刷缓冲，确保最后的日志落盘、不遗留任何进程相关对象
             _window.Closed += (_, _) =>
             {
+                ShutdownSingleInstanceGuard();
                 _logger.LogInformation("应用正常退出，版本=v{Version}。", typeof(App).Assembly.GetName().Version);
                 Serilog.Log.CloseAndFlush();
             };

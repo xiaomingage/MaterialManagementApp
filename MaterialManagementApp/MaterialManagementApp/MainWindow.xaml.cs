@@ -4,6 +4,7 @@ using System.IO;
 using MaterialManagementApp.Common;
 using MaterialManagementApp.Pages;
 using MaterialManagementApp.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -24,11 +25,11 @@ public sealed partial class MainWindow : Window
     /// <summary>主窗口句柄，托盘唤起时用于还原与前置窗口。</summary>
     private readonly IntPtr _hwnd;
 
-    /// <summary>窗口当前是否已隐藏到托盘后台。</summary>
-    private bool _hiddenToTray;
-
     /// <summary>是否为托盘菜单触发的真实退出（区分「点 X 隐藏到托盘」）。</summary>
     private bool _forceExit;
+
+    /// <summary>主窗口日志实例：关闭行为保存失败等异常需要留痕，便于排查用户现场问题。</summary>
+    private readonly ILogger _logger = AppLog.CreateLogger<MainWindow>();
 
     /// <summary>初始化主窗口、默认导航到工作台、启动时钟并刷新状态栏。</summary>
     public MainWindow()
@@ -39,14 +40,15 @@ public sealed partial class MainWindow : Window
 
         SetWindowIcon();
 
-        // 托盘后台运行：启动时按配置加载托盘图标；点 X 的关闭行为在 OnAppWindowClosing 拦截。
+        // 托盘后台运行：托盘图标常驻启用（「每次询问」「最小化到托盘」两种关闭行为都可能用到）；
+        // 点 X 的关闭行为在 OnAppWindowClosing 按 CloseAction 分流。
         // 窗口毛玻璃背景由 ThemeHelper.ApplyMode 按主题模式统一开关（XAML 中的默认背景仅作兜底）。
         TrayIconManager.Instance.Configure(
             Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"),
             Title ?? "物资管理系统",
             ShowFromTray,
             ExitFromTray);
-        TrayIconManager.Instance.SetEnabled(SettingsService.Instance.Settings.MinimizeToTray);
+        TrayIconManager.Instance.SetEnabled(true);
         AppWindow.Closing += OnAppWindowClosing;
 
         ContentFrame.Navigate(typeof(DashboardPage));
@@ -230,8 +232,9 @@ public sealed partial class MainWindow : Window
     // ==================== 托盘后台运行 ====================
 
     /// <summary>
-    /// 拦截窗口关闭：开启托盘选项时点 X 不退出，改为隐藏到托盘后台驻留；
-    /// 后台期间 OCR 监听、台账轮询等任务持续运行。未开启选项时走默认关闭（真实退出）。
+    /// 拦截窗口关闭，按设置的关闭行为（CloseAction）分流：
+    /// Exit 直接放行（Closed 事件负责清理）；MinimizeToTray 且托盘可用时隐藏到托盘；
+    /// Ask（以及托盘不可用的兜底路径）弹窗询问「直接退出 / 最小化到托盘」，支持「记住我的选择」。
     /// </summary>
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -240,10 +243,124 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (SettingsService.Instance.Settings.MinimizeToTray && TrayIconManager.Instance.IsIconVisible)
+        var action = SettingsService.Instance.Settings.CloseAction;
+        if (string.Equals(action, "Exit", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.Equals(action, "MinimizeToTray", StringComparison.OrdinalIgnoreCase)
+            && TrayIconManager.Instance.IsIconVisible)
         {
             args.Cancel = true;
             HideToTray();
+            return;
+        }
+
+        // Ask（或 MinimizeToTray 但托盘不可用的兜底）：取消本次关闭，改为弹窗询问
+        args.Cancel = true;
+        DispatcherQueue.TryEnqueue(ShowCloseConfirmDialogAsync);
+    }
+
+    /// <summary>防止关闭确认弹窗重复弹出（快速连点 X 时 Closing 会多次触发）。</summary>
+    private bool _isCloseDialogOpen;
+
+    /// <summary>
+    /// 关闭确认弹窗：直接退出 / 最小化到托盘二选一，可勾选「记住我的选择，以后不再提示」，
+    /// 勾选后写回设置，之后点击 X 按记住的行为执行，不再弹窗（仍可在设置页修改）。
+    /// </summary>
+    private async void ShowCloseConfirmDialogAsync()
+    {
+        if (_isCloseDialogOpen)
+        {
+            return;
+        }
+
+        _isCloseDialogOpen = true;
+        try
+        {
+            var remember = new CheckBox { Content = "记住我的选择，以后不再提示" };
+
+            var content = new StackPanel { Spacing = 12 };
+            content.Children.Add(new TextBlock
+            {
+                Text = "要直接退出程序，还是最小化到系统托盘继续后台运行？",
+                TextWrapping = TextWrapping.Wrap
+            });
+            content.Children.Add(remember);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "关闭物资管理系统",
+                Content = content,
+                PrimaryButtonText = "直接退出",
+                SecondaryButtonText = "最小化到托盘",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary
+            };
+
+            var result = await dialog.ShowAsync();
+            switch (result)
+            {
+                case ContentDialogResult.Primary:
+                    if (remember.IsChecked == true)
+                    {
+                        SaveCloseAction("Exit");
+                    }
+
+                    _forceExit = true;
+                    Close();
+                    break;
+
+                case ContentDialogResult.Secondary when TrayIconManager.Instance.IsIconVisible:
+                    if (remember.IsChecked == true)
+                    {
+                        SaveCloseAction("MinimizeToTray");
+                    }
+
+                    HideToTray();
+                    break;
+
+                case ContentDialogResult.Secondary:
+                    // 托盘图标不可用，无法后台驻留：按直接退出处理，避免窗口藏起来找不回
+                    if (remember.IsChecked == true)
+                    {
+                        SaveCloseAction("Exit");
+                    }
+
+                    _forceExit = true;
+                    Close();
+                    break;
+            }
+            // Cancel：什么都不做，窗口保持打开
+        }
+        catch (Exception ex)
+        {
+            // async void 未捕获异常会直接带崩进程：弹窗路径的任何意外（如保存配置失败）只记录、不外抛
+            _logger.LogError(ex, "关闭确认弹窗处理异常");
+        }
+        finally
+        {
+            _isCloseDialogOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// 把用户在关闭确认弹窗中勾选的行为写入设置并立即保存。
+    /// 保存失败只影响「记住选择」（本次不记住），弹窗中选择的退出/托盘行为照常执行，绝不抛异常崩溃。
+    /// </summary>
+    private void SaveCloseAction(string action)
+    {
+        try
+        {
+            var settings = SettingsService.Instance.Settings;
+            settings.CloseAction = action;
+            SettingsService.Instance.Save();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "保存关闭行为设置失败，本次不记住选择");
         }
     }
 
@@ -253,7 +370,6 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void HideToTray()
     {
-        _hiddenToTray = true;
         _clockTimer.Stop();
         AppWindow.Hide();
     }
@@ -261,7 +377,6 @@ public sealed partial class MainWindow : Window
     /// <summary>从托盘唤起主窗口：显示、还原最小化并前置，恢复状态栏时钟。</summary>
     public void ShowFromTray()
     {
-        _hiddenToTray = false;
         AppWindow.Show();
         TrayIconManager.ShowAndActivate(_hwnd);
         _clockTimer.Start();
@@ -275,21 +390,13 @@ public sealed partial class MainWindow : Window
         Close();
     }
 
-    /// <summary>设置保存后重新应用主题，并让托盘开关即时生效。</summary>
+    /// <summary>设置保存后重新应用主题（关闭行为与托盘显隐即时生效于下次点 X，无需额外处理）。</summary>
     /// <param name="sender">事件源。</param>
     /// <param name="e">事件参数。</param>
     private void OnSettingsChanged(object? sender, EventArgs e)
     {
         var settings = SettingsService.Instance.Settings;
         ThemeHelper.ApplyMode(this, Content as FrameworkElement, settings);
-
-        // 托盘配置即时生效；若在隐藏状态下关闭了托盘选项，恢复窗口避免用户找不到界面
-        var trayEnabled = settings.MinimizeToTray;
-        TrayIconManager.Instance.SetEnabled(trayEnabled);
-        if (!trayEnabled && _hiddenToTray)
-        {
-            ShowFromTray();
-        }
     }
 
     /// <summary>窗口关闭时停止计时器、解除事件订阅并销毁托盘图标，避免泄漏。</summary>

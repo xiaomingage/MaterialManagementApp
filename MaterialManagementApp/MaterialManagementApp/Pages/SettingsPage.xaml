@@ -61,10 +61,10 @@
                         IsReadOnly="True"
                         TextWrapping="Wrap" />
                     <TextBox
-                        Header="配置文件中的路径设置（为空表示使用默认路径）"
-                        IsReadOnly="True"
-                        TextWrapping="Wrap"
-                        Text="{x:Bind ViewModel.ConfiguredDatabasePath, Mode=OneWay}" />
+                        Header="数据库保存位置（为空表示使用默认：程序目录\Data\MaterialSystem.db）"
+                        Text="{x:Bind ViewModel.ConfiguredDatabasePath, Mode=TwoWay}"
+                        PlaceholderText="例如 D:\MaterialData\MaterialSystem.db"
+                        TextWrapping="Wrap" />
                     <TextBox
                         Header="默认存放目录"
                         IsReadOnly="True"
@@ -76,9 +76,15 @@
                         TextWrapping="Wrap"
                         Text="{x:Bind ViewModel.SettingsFilePath, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="浏览…" Command="{x:Bind ViewModel.BrowseDatabasePathCommand}" />
                         <Button Content="备份数据库" Command="{x:Bind ViewModel.BackupDatabaseCommand}" />
                         <Button Content="打开所在文件夹" Command="{x:Bind ViewModel.OpenDatabaseFolderCommand}" />
                     </StackPanel>
+                    <TextBlock
+                        Text="修改保存位置后点击「保存」，重启程序生效；新位置首次启动会创建全新空库，迁移旧数据请先在原位置「备份数据库」。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -435,16 +441,18 @@
                 </StackPanel>
             </Border>
 
-            <!-- 后台运行 -->
+            <!-- 关闭行为 -->
             <Border
                 Style="{StaticResource StatCardBorderStyle}">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="后台运行" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <CheckBox
-                        Content="关闭窗口时最小化到托盘后台运行"
-                        IsChecked="{x:Bind ViewModel.MinimizeToTray, Mode=TwoWay}" />
+                    <TextBlock Text="关闭窗口行为" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <ComboBox
+                        Header="点击右上角 X 时"
+                        HorizontalAlignment="Stretch"
+                        ItemsSource="{x:Bind ViewModel.CloseActionOptions, Mode=OneTime}"
+                        SelectedIndex="{x:Bind ViewModel.CloseActionIndex, Mode=TwoWay}" />
                     <TextBlock
-                        Text="开启后点击右上角 X 仅隐藏主窗口并驻留系统托盘，OCR 监听、台账轮询等任务继续在后台运行；左键点击托盘图标唤起主窗口，右键菜单提供「显示主窗口」与「退出软件」。关闭该选项后，点击 X 直接退出程序。修改后点击「保存」生效。"
+                        Text="每次询问：关闭时弹窗让你选择直接退出或最小化到托盘，可勾选「记住我的选择」不再提示；最小化到托盘：窗口隐藏并驻留系统托盘，OCR 监听、台账轮询等任务继续在后台运行，左键点击托盘图标唤起主窗口，右键菜单提供「显示主窗口」与「退出软件」；直接退出：关闭窗口并结束程序，相关进程全部退出。修改后点击「保存」生效。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
