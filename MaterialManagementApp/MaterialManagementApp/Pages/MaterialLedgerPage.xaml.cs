@@ -23,6 +23,9 @@ public sealed partial class MaterialLedgerPage : Page
     /// <summary>当前打开的非模态 OCR 识别窗口；同一时间只保留一个实例。</summary>
     private OcrImportWindow? _ocrWindow;
 
+    /// <summary>当前打开的非模态批量扫描识别窗口；同一时间只保留一个实例。</summary>
+    private OcrBatchImportWindow? _batchOcrWindow;
+
     /// <summary>页面视图模型，供 XAML 通过 x:Bind 绑定。</summary>
     public MaterialLedgerViewModel ViewModel { get; } = new();
 
@@ -239,6 +242,55 @@ public sealed partial class MaterialLedgerPage : Page
         if (row is not null)
         {
             ViewModel.SaveRow(row);
+        }
+    }
+
+    /// <summary>
+    /// 「批量扫描识别」：打开非模态的批量 OCR 窗口，一次识别多张地材单图片。
+    /// 每张卡片可手动修正后单独保存，保存时图片自动复制进数据目录并关联台账记录。
+    /// </summary>
+    private void OnBatchOcrImportClick(object sender, RoutedEventArgs e)
+    {
+        if (_batchOcrWindow is null)
+        {
+            _batchOcrWindow = new OcrBatchImportWindow();
+
+            // 窗口关闭后刷新列表：批量保存的记录与图片直接落库，需要重新加载才能看到
+            _batchOcrWindow.Closed += (_, _) =>
+            {
+                _batchOcrWindow = null;
+                ViewModel.Load();
+            };
+        }
+
+        _batchOcrWindow.Activate();
+    }
+
+    /// <summary>「地材单图片」列的「查看」按钮：用系统默认看图工具打开该记录关联的扫描图片。</summary>
+    private void OnViewLedgerImageClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: MaterialLedger row }
+            || string.IsNullOrWhiteSpace(row.LedgerImagePath))
+        {
+            return;
+        }
+
+        if (!System.IO.File.Exists(row.LedgerImagePath))
+        {
+            ViewModel.StatusMessage = $"图片文件不存在：{row.LedgerImagePath}";
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(row.LedgerImagePath)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusMessage = $"打开图片失败：{ex.Message}";
         }
     }
 }

@@ -10,8 +10,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
-using Windows.Graphics.Imaging;
-using Windows.Security.Cryptography;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
@@ -26,9 +24,6 @@ namespace MaterialManagementApp.Pages;
 /// </summary>
 public sealed partial class OcrImportWindow : Window
 {
-    /// <summary>图片最长边上限，超过则等比缩小后再识别，避免超大图拖慢推理。</summary>
-    private const uint MaxImageDimension = 2400;
-
     /// <summary>等待系统截图写回剪贴板的轮询间隔（毫秒）。</summary>
     private const int CapturePollIntervalMs = 500;
 
@@ -304,43 +299,10 @@ public sealed partial class OcrImportWindow : Window
         }
 
         stream.Seek(0);
-        var decoder = await BitmapDecoder.CreateAsync(stream);
-
-        SoftwareBitmap bitmap;
-        if (decoder.PixelWidth > MaxImageDimension || decoder.PixelHeight > MaxImageDimension)
-        {
-            // 等比缩小到上限内：既控制识别耗时，也保留单据文字的可读性
-            var scale = Math.Min(
-                (double)MaxImageDimension / decoder.PixelWidth,
-                (double)MaxImageDimension / decoder.PixelHeight);
-
-            bitmap = await decoder.GetSoftwareBitmapAsync(
-                BitmapPixelFormat.Bgra8,
-                BitmapAlphaMode.Premultiplied,
-                new BitmapTransform
-                {
-                    ScaledWidth = (uint)Math.Max(1, decoder.PixelWidth * scale),
-                    ScaledHeight = (uint)Math.Max(1, decoder.PixelHeight * scale)
-                },
-                ExifOrientationMode.IgnoreExifOrientation,
-                ColorManagementMode.DoNotColorManage);
-        }
-        else
-        {
-            bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-        }
-
-        using (bitmap)
-        {
-            _imageWidth = bitmap.PixelWidth;
-            _imageHeight = bitmap.PixelHeight;
-
-            // SoftwareBitmap 的 BGRA8 缓冲区紧密排列，步长固定为 宽度 × 4，正好匹配引擎的交错像素输入
-            var bytes = new byte[_imageWidth * _imageHeight * 4];
-            var buffer = CryptographicBuffer.CreateFromByteArray(bytes);
-            bitmap.CopyToBuffer(buffer);
-            CryptographicBuffer.CopyToByteArray(buffer, out _imageBgra);
-        }
+        var decoded = await OcrImageDecoder.DecodeAsync(stream);
+        _imageBgra = decoded.Bgra;
+        _imageWidth = decoded.Width;
+        _imageHeight = decoded.Height;
 
         SetStatus($"已载入图片：{sourceName}（{_imageWidth} × {_imageHeight}）。");
         await RecognizeAsync();

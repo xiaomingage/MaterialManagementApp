@@ -144,7 +144,8 @@ CREATE TABLE IF NOT EXISTS MaterialLedger (
     PlateNumber TEXT NOT NULL DEFAULT '',
     Specification TEXT NOT NULL DEFAULT '',
     SiteSignature TEXT NOT NULL DEFAULT '',
-    Remark TEXT NOT NULL DEFAULT '');
+    Remark TEXT NOT NULL DEFAULT '',
+    LedgerImagePath TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS IX_MaterialLedger_EntryDate ON MaterialLedger(EntryDate);
 
 CREATE TABLE IF NOT EXISTS SmallEquipment (
@@ -274,6 +275,52 @@ CREATE TABLE IF NOT EXISTS DbVersion (
 
     /// <summary>数据库文件的绝对路径，供界面诊断显示。</summary>
     public string DatabasePath => _databasePath;
+
+    /// <summary>
+    /// 台账扫描图片的存储目录：数据库文件同目录下的 LedgerImages 子目录。
+    /// 图片与数据库放在一起，换机或迁移时把数据目录整体拷走图片不丢。
+    /// </summary>
+    public string LedgerImageDir
+    {
+        get
+        {
+            var dbDir = Path.GetDirectoryName(_databasePath);
+            if (string.IsNullOrWhiteSpace(dbDir))
+            {
+                dbDir = AppContext.BaseDirectory;
+            }
+
+            return Path.Combine(dbDir, "LedgerImages");
+        }
+    }
+
+    /// <summary>
+    /// 把地材单扫描图片复制到 <see cref="LedgerImageDir"/> 持久保存，返回复制后的完整路径。
+    /// 文件名加时间戳前缀避免重名覆盖；来源文件已在存储目录内时不重复复制。
+    /// </summary>
+    /// <param name="sourcePath">扫描图片当前的完整路径（临时目录、用户相册均可）。</param>
+    /// <returns>存储目录内的图片完整路径；目录不可写等 IO 异常由调用方捕获提示。</returns>
+    public string SaveLedgerImage(string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException("扫描图片不存在，无法保存。", sourcePath);
+        }
+
+        var dir = LedgerImageDir;
+        Directory.CreateDirectory(dir);
+
+        var full = Path.GetFullPath(sourcePath);
+        if (string.Equals(Path.GetDirectoryName(full), dir, StringComparison.OrdinalIgnoreCase))
+        {
+            // 已在存储目录内（如同一张图重复保存），直接沿用不再复制
+            return full;
+        }
+
+        var destination = Path.Combine(dir, $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Path.GetFileName(sourcePath)}");
+        File.Copy(full, destination, overwrite: false);
+        return destination;
+    }
 
     /// <summary>
     /// 把当前数据库文件复制到指定路径，用于设置页的手工备份。
@@ -443,7 +490,7 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             }
         }
 
-        foreach (var column in new[] { "PlateNumber", "Specification", "SiteSignature", "Remark" })
+        foreach (var column in new[] { "PlateNumber", "Specification", "SiteSignature", "Remark", "LedgerImagePath" })
         {
             if (existing.Contains(column))
             {
@@ -795,6 +842,8 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             ("PlateNumber", ledger.PlateNumber),
             ("Specification", ledger.Specification),
             ("SiteSignature", ledger.SiteSignature),
+            ("Remark", ledger.Remark),
+            ("LedgerImagePath", ledger.LedgerImagePath),
             ("ProjectDept", ledger.ProjectDept),
             ("ProjectPhase", ledger.ProjectPhase)
         });
@@ -825,6 +874,8 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             ("PlateNumber", ledger.PlateNumber),
             ("Specification", ledger.Specification),
             ("SiteSignature", ledger.SiteSignature),
+            ("Remark", ledger.Remark),
+            ("LedgerImagePath", ledger.LedgerImagePath),
             ("ProjectDept", ledger.ProjectDept),
             ("ProjectPhase", ledger.ProjectPhase)
         });

@@ -115,6 +115,16 @@ public class MaterialLedger : INotifyPropertyChanged
     public string ProjectPhase { get; set; } = string.Empty;
 
     /// <summary>
+    /// 地材单扫描图片的完整路径。批量扫描识别保存时会把图片复制到
+    /// 数据库同目录的 LedgerImages 文件夹持久保存，这里记录复制后的路径；
+    /// 空串表示该记录没有关联的扫描图片（手动录入的历史数据）。
+    /// </summary>
+    public string LedgerImagePath { get; set; } = string.Empty;
+
+    /// <summary>该记录是否关联了地材单扫描图片，供表格「查看」按钮显隐。</summary>
+    public bool HasLedgerImage => !string.IsNullOrWhiteSpace(LedgerImagePath);
+
+    /// <summary>
     /// 是否为「表格内联新增」尚未入库的空白行。该标记只存在于内存中，不写入数据库，
     /// 仅用于让行末操作列显示「保存 / 取消」而不是「保存 / 删除」。
     /// </summary>

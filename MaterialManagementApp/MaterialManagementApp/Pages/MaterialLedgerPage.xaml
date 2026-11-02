@@ -93,6 +93,7 @@
                 <Button Content="刷新" Command="{x:Bind ViewModel.LoadCommand}" />
                 <Button Content="按模板导出" Click="OnExportTemplateClick" />
                 <Button Content="导入单据 / OCR 识别" Click="OnOcrImportClick" />
+                <Button Content="批量扫描识别" Click="OnBatchOcrImportClick" />
             </StackPanel>
             <!-- 状态提示条：有消息才显示，浅灰容器与卡片语言一致 -->
             <Border
@@ -184,6 +185,19 @@
                 <controls:DataGridTextColumn
                     Binding="{Binding Remark, Mode=TwoWay}"
                     Header="备注" />
+                <!-- 地材单图片列：批量扫描识别保存时自动关联图片，点击「查看」打开大图 -->
+                <controls:DataGridTemplateColumn Header="地材单图片">
+                    <controls:DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button
+                                Content="查看"
+                                Click="OnViewLedgerImageClick"
+                                Padding="12,2"
+                                Visibility="{Binding HasLedgerImage, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                                ToolTipService.ToolTip="{Binding LedgerImagePath}" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellTemplate>
+                </controls:DataGridTemplateColumn>
                 <!-- 行内操作列：模板列内按钮的 DataContext 就是该行数据，因此用 Click 事件处理 -->
                 <controls:DataGridTemplateColumn Header="操作">
                     <controls:DataGridTemplateColumn.CellTemplate>
