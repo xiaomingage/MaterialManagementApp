@@ -1,6 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Input;
+using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.WinUI.UI.Controls;
+using MaterialManagementApp.Common;
 using MaterialManagementApp.Models;
 using MaterialManagementApp.Services.Export;
 using MaterialManagementApp.Services;
@@ -15,7 +20,8 @@ namespace MaterialManagementApp.Pages;
 /// <summary>
 /// 台账明细页面（地材台账 → 台账明细）。
 /// 上半部分为查询筛选面板，下半部分为数据列表与操作：
-/// 「新增」在表格首行插入一条全编辑状态的空白行，行末「保存」校验后入库、「取消」直接移除；
+/// 点击表格空白处即插入草稿行（浅绿底标记，可连续录入多条），工具栏「保存」批量校验入库；
+/// 已入库的行离开编辑即自动保存（Excel 式），行末仅保留「删除」；
 /// 金额列为 数量 × 单价 的派生值，不手工录入。
 /// </summary>
 public sealed partial class MaterialLedgerPage : Page
@@ -29,6 +35,12 @@ public sealed partial class MaterialLedgerPage : Page
     /// <summary>页面视图模型，供 XAML 通过 x:Bind 绑定。</summary>
     public MaterialLedgerViewModel ViewModel { get; } = new();
 
+    /// <summary>
+    /// 「点空白即新增」的命令：由 DataGridQuickAdd 附加行为在点击表格空白区时触发，
+    /// 也可供后续入口（如快捷键）复用。
+    /// </summary>
+    public ICommand CreateDraftRowCommand { get; }
+
     /// <summary>初始化页面。</summary>
     public MaterialLedgerPage()
     {
@@ -40,6 +52,14 @@ public sealed partial class MaterialLedgerPage : Page
 
         // 保存失败（校验不通过 / 数据库异常）时弹出模态警告弹窗，表单内容保留
         ViewModel.SaveFailed += OnViewModelSaveFailed;
+
+        // 翻页 / 查询 / 刷新 / 重置前存在草稿行时，由页面弹出「离开将丢弃」确认弹窗
+        ViewModel.ConfirmDiscardDraftsAsync = ConfirmDiscardDraftsAsync;
+
+        // 开启「点空白即新增」：行为组件做空白命中测试，命中后执行本页创建草稿行的命令
+        CreateDraftRowCommand = new RelayCommand(CreateDraftRowAndBeginEdit);
+        DataGridQuickAdd.SetIsEnabled(LedgerGrid, true);
+        DataGridQuickAdd.SetBlankClickCommand(LedgerGrid, CreateDraftRowCommand);
     }
 
     /// <summary>
@@ -69,10 +89,19 @@ public sealed partial class MaterialLedgerPage : Page
         }
 
         LedgerGrid.SelectedItem = target;
-        // 商品名称列头是 StackPanel（含必填红星），不能按 Header 文本匹配，改按绑定路径定位
-        LedgerGrid.CurrentColumn = LedgerGrid.Columns.FirstOrDefault(c =>
-            c is CommunityToolkit.WinUI.UI.Controls.DataGridTextColumn textColumn &&
-            string.Equals(textColumn.Binding?.Path?.Path, "MaterialName", StringComparison.Ordinal));
+        // 商品名称列头是 StackPanel（含必填红星），不能按 Header 文本匹配，改按绑定路径定位；
+        // 表格没有当前行时 set_CurrentColumn 会抛 InvalidOperationException 曾致应用退出，必须防护
+        try
+        {
+            LedgerGrid.CurrentColumn = LedgerGrid.Columns.FirstOrDefault(c =>
+                c is DataGridTextColumn textColumn &&
+                string.Equals(textColumn.Binding?.Path?.Path, "MaterialName", StringComparison.Ordinal));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 无当前行时定位失败不影响弹窗流程，用户可手工点格编辑
+            System.Diagnostics.Debug.WriteLine($"[MaterialLedgerPage] 定位商品名称列失败：{ex.Message}");
+        }
         LedgerGrid.ScrollIntoView(target, LedgerGrid.CurrentColumn);
 
         DispatcherQueue.TryEnqueue(() =>
@@ -89,6 +118,27 @@ public sealed partial class MaterialLedgerPage : Page
         });
     }
 
+    /// <summary>
+    /// 离开确认弹窗：表格中存在未保存的草稿行时，翻页 / 查询 / 刷新 / 重置都会先弹此窗；
+    /// 返回 true 表示用户确认丢弃草稿并继续。
+    /// </summary>
+    /// <returns>确认离开返回 true。</returns>
+    private async Task<bool> ConfirmDiscardDraftsAsync()
+    {
+        var count = ViewModel.Ledgers.Count(x => x.IsNewRow);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "有未保存的新增行",
+            Content = $"表格中有 {count} 行尚未保存的新增记录（浅绿底），离开后这些行将被丢弃。确定要离开吗？",
+            PrimaryButtonText = "丢弃并离开",
+            CloseButtonText = "留下继续编辑",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
     /// <summary>进入页面时按当前筛选条件加载台账数据。</summary>
     /// <param name="e">导航事件参数。</param>
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -96,7 +146,7 @@ public sealed partial class MaterialLedgerPage : Page
         base.OnNavigatedTo(e);
         DeptPhaseService.Instance.Refresh();
         DeptPhaseFilter.RefreshOptions();
-        ViewModel.LoadCommand.Execute(null);
+        ViewModel.Load();
     }
 
     /// <summary>表格选中行变化时同步到视图模型，保留选中态。</summary>
@@ -108,12 +158,10 @@ public sealed partial class MaterialLedgerPage : Page
     }
 
     /// <summary>
-    /// 「新增」：在表格首行插入空白行，并让该行立即进入编辑状态，
-    /// 用户无需弹窗即可直接开始录入。
+    /// 「点空白即新增」入口：在表格首行插入草稿行，并让该行立即进入编辑状态，
+    /// 用户无需任何按钮即可开始录入。
     /// </summary>
-    /// <param name="sender">事件源。</param>
-    /// <param name="e">路由事件参数。</param>
-    private void OnNewRowClick(object sender, RoutedEventArgs e)
+    private void CreateDraftRowAndBeginEdit()
     {
         ViewModel.NewRowCommand.Execute(null);
 
@@ -127,11 +175,17 @@ public sealed partial class MaterialLedgerPage : Page
         LedgerGrid.CurrentColumn = LedgerGrid.Columns[0];
         LedgerGrid.ScrollIntoView(row, LedgerGrid.Columns[0]);
 
-        // 新行的单元格容器要等本次布局完成后才生成，BeginEdit 必须延后一帧再调用
+        // 新行的单元格容器要等本次布局完成后才生成，BeginEdit 必须延后一帧再调用；
+        // 点空白新增时焦点仍停留在窗口级（没有任何单元格被点击），BeginEdit 前必须先让表格拿到焦点
         DispatcherQueue.TryEnqueue(() =>
         {
             try
             {
+                if (!LedgerGrid.Focus(FocusState.Pointer))
+                {
+                    System.Diagnostics.Debug.WriteLine("[MaterialLedgerPage] 表格获取焦点失败，保持选中态。");
+                }
+
                 LedgerGrid.BeginEdit();
             }
             catch (Exception ex)
@@ -142,35 +196,57 @@ public sealed partial class MaterialLedgerPage : Page
         });
     }
 
-    /// <summary>行内「保存」：新增行执行入库，已有行执行更新。</summary>
-    /// <param name="sender">被点击的按钮。</param>
-    /// <param name="e">路由事件参数。</param>
-    private void OnSaveRowClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 行编辑结束：已入库的行在提交时自动落库（Excel 式体验，无需行末保存按钮）；
+    /// 草稿行不自动入库（可能尚未填完，且名称为空会误弹失败窗），交给工具栏「保存」批量处理，
+    /// 并在下一帧把整表按入库日期倒序归位。
+    /// </summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">行编辑结束参数。</param>
+    private void OnLedgerRowEditEnded(object sender, DataGridRowEditEndedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MaterialLedger row })
+        if (e.EditAction != DataGridEditAction.Commit || e.Row.DataContext is not MaterialLedger row)
         {
-            ViewModel.SaveRow(row);
+            return;
+        }
+
+        if (row.IsNewRow)
+        {
+            // 草稿行：日期可能刚被改过，延迟一帧重排，避免在行编辑事件内直接搬动集合
+            DispatcherQueue.TryEnqueue(ViewModel.Resort);
+        }
+        else
+        {
+            // 已入库行：延迟一帧保存。SaveRow 对已有行是原地更新（不重建集合），
+            // 延迟不会丢草稿；同步执行则会在 RowEditEnded 事件内触碰集合引发重入异常
+            DispatcherQueue.TryEnqueue(() => ViewModel.SaveRow(row));
         }
     }
 
-    /// <summary>行内「取消」：移除尚未入库的空白新增行。</summary>
-    /// <param name="sender">被点击的按钮。</param>
-    /// <param name="e">路由事件参数。</param>
-    private void OnCancelNewRowClick(object sender, RoutedEventArgs e)
+    /// <summary>行加载时给未保存的草稿行铺一层浅绿底色，与已入库行区分；行容器会复用，非草稿行必须清掉旧底色。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">行加载参数。</param>
+    private void OnLedgerLoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MaterialLedger row })
-        {
-            ViewModel.CancelNewRow(row);
-        }
+        e.Row.Background = e.Row.DataContext is MaterialLedger { IsNewRow: true }
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0x10, 0x8A, 0x43))
+            : null;
     }
 
-    /// <summary>行内「删除」：二次确认后从集合与数据库中移除该行。</summary>
+    /// <summary>行内「删除」：未入库的草稿行直接移除；已入库行二次确认后从集合与数据库中删除。</summary>
     /// <param name="sender">被点击的按钮。</param>
     /// <param name="e">路由事件参数。</param>
     private async void OnDeleteRowClick(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: MaterialLedger row })
         {
+            return;
+        }
+
+        // 草稿行没有历史数据，直接移除不打扰确认
+        if (row.IsNewRow)
+        {
+            ViewModel.DeleteRow(row);
             return;
         }
 

@@ -11,7 +11,7 @@
     mc:Ignorable="d">
 
     <Page.Resources>
-        <!-- 新增行的「取消」与已有行的「删除」按 IsNewRow 互斥显示 -->
+        <!-- 已入库行的「删除」按钮与地材单图片「查看」按状态显隐 -->
         <common:BoolToVisibilityConverter x:Key="BoolToVisibility" />
         <!-- 表格空态：记录数为 0 时显示引导提示 -->
         <common:CountToVisibilityConverter x:Key="CountToVisibility" />
@@ -86,11 +86,15 @@
             </Grid>
         </Border>
 
-        <!-- 下半部分：表格上方的操作按钮。「新增」直接在表格首行插入空白行，不再弹出录入表单 -->
+        <!-- 表格上方的操作按钮。「保存」批量入库表格中的全部草稿行（浅绿底）；
+             新增不再需要按钮——点击表格空白处即自动插入草稿行 -->
         <StackPanel Grid.Row="2" Spacing="8">
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="新增" Click="OnNewRowClick" />
-                <Button Content="刷新" Command="{x:Bind ViewModel.LoadCommand}" />
+                <Button
+                    Content="保存"
+                    Command="{x:Bind ViewModel.SaveAllDraftsCommand}"
+                    Style="{ThemeResource AccentButtonStyle}" />
+                <Button Content="刷新" Command="{x:Bind ViewModel.RefreshGuardedCommand}" />
                 <Button Content="按模板导出" Click="OnExportTemplateClick" />
                 <Button Content="导入单据 / OCR 识别" Click="OnOcrImportClick" />
                 <Button Content="批量扫描识别" Click="OnBatchOcrImportClick" />
@@ -109,17 +113,22 @@
             </Border>
         </StackPanel>
 
-        <!-- 表格区：单元格可编辑，金额列为只读的派生值；行末按行状态显示保存/删除或保存/取消。
+        <!-- 表格区：单元格可编辑，金额列为只读的派生值。
+             交互约定：点击表格空白处即插入草稿行（DataGridQuickAdd 行为，见 code-behind）；
+             已入库的行离开编辑即自动保存；草稿行由上方「保存」批量入库；行末仅保留「删除」。
              无数据时叠加居中空态提示（记录数为 0 时显示，新增/删除行即时切换） -->
         <Grid Grid.Row="3">
             <controls:DataGrid
                 x:Name="LedgerGrid"
                 AutoGenerateColumns="False"
+            Background="Transparent"
             CanUserSortColumns="True"
             GridLinesVisibility="All"
             IsReadOnly="False"
             SelectionMode="Single"
             SelectionChanged="OnLedgerSelectionChanged"
+            RowEditEnded="OnLedgerRowEditEnded"
+            LoadingRow="OnLedgerLoadingRow"
             ItemsSource="{x:Bind ViewModel.Ledgers, Mode=OneWay}">
             <controls:DataGrid.Columns>
                 <!-- 列顺序与名称严格对齐「地材台账模版」的 12 列表头（序号不入表格，由导出时生成） -->
@@ -198,36 +207,29 @@
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
-                <!-- 行内操作列：模板列内按钮的 DataContext 就是该行数据，因此用 Click 事件处理 -->
+                <!-- 行内操作列：模板列内按钮的 DataContext 就是该行数据，因此用 Click 事件处理。
+                     保存动作统一由上方「保存」按钮承担，行末只保留「删除」；
+                     未入库的草稿行删除时直接移除，已入库行删除前二次确认 -->
                 <controls:DataGridTemplateColumn Header="操作">
                     <controls:DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <!-- 保存：空白新增行执行入库，已有行执行更新 -->
-                                <Button Content="保存" Click="OnSaveRowClick" />
-                                <!-- 删除：仅已入库的行显示 -->
-                                <Button
-                                    Content="删除"
-                                    Click="OnDeleteRowClick"
-                                    Visibility="{Binding IsNewRow, Mode=OneWay, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}"
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                <!-- 取消：仅尚未入库的新增行显示，点击后直接移除该行 -->
-                                <Button
-                                    Content="取消"
-                                    Click="OnCancelNewRowClick"
-                                    Visibility="{Binding IsNewRow, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
-                            </StackPanel>
+                            <Button
+                                Content="删除"
+                                Click="OnDeleteRowClick"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
             </controls:DataGrid.Columns>
         </controls:DataGrid>
 
-        <!-- 空态：表格无数据时显示，居中不遮挡表头；新增行后即时隐藏 -->
+        <!-- 空态：表格无数据时显示，居中不遮挡表头；新增行后即时隐藏。
+             IsHitTestVisible=False 让点击穿透到表格空白区，直接触发「点空白即新增」 -->
         <StackPanel
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             Spacing="8"
+            IsHitTestVisible="False"
             Visibility="{x:Bind ViewModel.Ledgers.Count, Mode=OneWay, Converter={StaticResource CountToVisibility}}">
             <FontIcon
                 Glyph="&#xE719;"
@@ -240,7 +242,7 @@
                 Style="{ThemeResource BodyStrongTextBlockStyle}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="点击上方「新增」录入第一条记录，或使用「导入单据 / OCR 识别」批量导入。"
+                Text="点击表格空白处即可直接录入第一条记录，也可以使用「导入单据 / OCR 识别」批量导入。"
                 Style="{ThemeResource CaptionTextBlockStyle}"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 HorizontalAlignment="Center"

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MaterialManagementApp.Models;
@@ -14,8 +15,9 @@ namespace MaterialManagementApp.ViewModels;
 /// <summary>
 /// 物资台账页面（地材台账 → 台账明细）的视图模型。
 /// 上半部分是日期区间与物资名称筛选条件；下半部分的 DataGrid 直接承载数据录入：
-/// 点击「新增」会在表格首行插入一条全编辑状态的空白行，行末「保存」校验后写入数据库并刷新、
-/// 「取消」则直接移除该行。金额由 数量 × 单价 自动计算，不手工录入。
+/// 点击表格空白处即在首行插入草稿行（浅绿底标记，支持连续多条），
+/// 已入库的行离开编辑即自动保存（Excel 式），草稿行由工具栏「保存」批量校验入库。
+/// 金额由 数量 × 单价 自动计算，不手工录入。
 /// </summary>
 public partial class MaterialLedgerViewModel : ObservableObject
 {
@@ -88,6 +90,13 @@ public partial class MaterialLedgerViewModel : ObservableObject
     /// </summary>
     public event EventHandler? SaveFailed;
 
+    /// <summary>
+    /// 离开确认回调：翻页 / 查询 / 刷新 / 重置等重新加载动作发生且存在未保存草稿行时，
+    /// 由页面弹出「离开将丢弃」确认弹窗（确认离开返回 true）。
+    /// 视图模型无法直接操作 UI，故以委托注入；未注入时（如无 UI 环境）直接放行。
+    /// </summary>
+    public Func<Task<bool>>? ConfirmDiscardDraftsAsync;
+
     /// <summary>当前页码，从 1 开始。</summary>
     [ObservableProperty]
     private int _currentPage;
@@ -107,6 +116,9 @@ public partial class MaterialLedgerViewModel : ObservableObject
     /// <summary>是否已选中某行（保留供表格选中态使用）。</summary>
     public bool HasSelection => SelectedLedger is not null;
 
+    /// <summary>表格中是否存在尚未入库的草稿行（浅绿底标记的行）。</summary>
+    public bool HasDrafts => Ledgers.Any(x => x.IsNewRow);
+
     /// <summary>当前是否启用了任一筛选条件（用于区分提示文案）。</summary>
     private bool IsFilterActive =>
         StartDate.HasValue
@@ -116,8 +128,9 @@ public partial class MaterialLedgerViewModel : ObservableObject
     /// <summary>
     /// 按当前筛选条件从数据库分页加载台账记录，刷新物资名称下拉选项并重算合计。
     /// 先统计总条数求出总页数，再按当前页取一页数据；合计仍按当前页已加载的行计算。
+    /// 注意：不负责草稿行保护——用户主动触发的加载走 <see cref="RefreshGuardedAsync"/> 等带确认的命令，
+    /// 程序内部刷新（如保存成功后）直接调用本方法。
     /// </summary>
-    [RelayCommand]
     public void Load()
     {
         _logger.LogInformation("正在加载物料台账数据...");
@@ -169,11 +182,25 @@ public partial class MaterialLedgerViewModel : ObservableObject
         }
     }
 
-    /// <summary>翻到上一页。</summary>
+    /// <summary>
+    /// 「刷新」：存在未保存草稿行时先经页面弹窗确认，确认后丢弃草稿并重新加载。
+    /// </summary>
     [RelayCommand]
-    public void PreviousPage()
+    private async Task RefreshGuardedAsync()
     {
-        if (CurrentPage <= 1)
+        if (!await EnsureDraftsDiscardedAsync())
+        {
+            return;
+        }
+
+        Load();
+    }
+
+    /// <summary>翻到上一页（有草稿行时先确认离开）。</summary>
+    [RelayCommand]
+    private async Task PreviousPageAsync()
+    {
+        if (CurrentPage <= 1 || !await EnsureDraftsDiscardedAsync())
         {
             return;
         }
@@ -182,11 +209,11 @@ public partial class MaterialLedgerViewModel : ObservableObject
         Load();
     }
 
-    /// <summary>翻到下一页。</summary>
+    /// <summary>翻到下一页（有草稿行时先确认离开）。</summary>
     [RelayCommand]
-    public void NextPage()
+    private async Task NextPageAsync()
     {
-        if (CurrentPage >= TotalPages)
+        if (CurrentPage >= TotalPages || !await EnsureDraftsDiscardedAsync())
         {
             return;
         }
@@ -195,29 +222,44 @@ public partial class MaterialLedgerViewModel : ObservableObject
         Load();
     }
 
-    /// <summary>切换每页条数并回到第一页。</summary>
+    /// <summary>切换每页条数并回到第一页（有草稿行时先确认离开）。</summary>
     /// <param name="size">新的每页条数。</param>
     [RelayCommand]
-    public void ChangePageSize(int size)
+    private async Task ChangePageSizeAsync(int size)
     {
+        if (!await EnsureDraftsDiscardedAsync())
+        {
+            return;
+        }
+
         PageSize = size is < 1 or > 1000 ? 20 : size;
         CurrentPage = 1;
         Load();
     }
 
-    /// <summary>按当前筛选条件重新加载列表（「查询」按钮）。</summary>
+    /// <summary>按当前筛选条件重新加载列表（「查询」按钮，有草稿行时先确认离开）。</summary>
     [RelayCommand]
-    public void Query()
+    private async Task QueryAsync()
     {
+        if (!await EnsureDraftsDiscardedAsync())
+        {
+            return;
+        }
+
         _logger.LogInformation("正在按条件查询物料台账...");
         CurrentPage = 1;
         Load();
     }
 
-    /// <summary>清空全部筛选条件并重新加载。</summary>
+    /// <summary>清空全部筛选条件并重新加载（有草稿行时先确认离开）。</summary>
     [RelayCommand]
-    public void ResetFilter()
+    private async Task ResetFilterAsync()
     {
+        if (!await EnsureDraftsDiscardedAsync())
+        {
+            return;
+        }
+
         StartDate = null;
         EndDate = null;
         SelectedMaterialName = AllMaterialNames;
@@ -228,20 +270,57 @@ public partial class MaterialLedgerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 新增：在表格第一行插入一条全编辑状态的空白记录。
-    /// 已存在未保存的空白行时先移除旧的，避免出现多条空行；
-    /// 该行不写数据库，只有点击行末「保存」才会校验并入库。
+    /// 离开保护：存在未保存草稿行时先经页面弹窗确认，确认离开则丢弃全部草稿行。
+    /// 无草稿行或页面未注入确认回调时直接放行。
+    /// </summary>
+    /// <returns>true 表示可以继续执行加载动作。</returns>
+    private async Task<bool> EnsureDraftsDiscardedAsync()
+    {
+        if (!HasDrafts)
+        {
+            return true;
+        }
+
+        if (ConfirmDiscardDraftsAsync is null)
+        {
+            _logger.LogWarning("存在未保存草稿行但页面未注入离开确认回调，直接放行。");
+            return true;
+        }
+
+        if (await ConfirmDiscardDraftsAsync())
+        {
+            DiscardDrafts();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>丢弃全部未入库的草稿行（仅移出集合，不涉及数据库）。</summary>
+    private void DiscardDrafts()
+    {
+        for (var i = Ledgers.Count - 1; i >= 0; i--)
+        {
+            var draft = Ledgers[i];
+            if (draft.IsNewRow)
+            {
+                DetachTotalsTracking(draft);
+                Ledgers.RemoveAt(i);
+            }
+        }
+
+        RecalculateTotals();
+        _logger.LogInformation("已丢弃全部未保存的草稿行。");
+    }
+
+    /// <summary>
+    /// 新增：在表格第一行插入一条全编辑状态的草稿行（浅绿底标记，界面由页面负责进入编辑）。
+    /// 支持连续多条草稿行批量录入，不移除已有草稿；该行不写数据库，
+    /// 只有点击工具栏「保存」才会整体校验入库。
     /// </summary>
     [RelayCommand]
     public void NewRow()
     {
-        var pending = Ledgers.FirstOrDefault(x => x.IsNewRow);
-        if (pending is not null)
-        {
-            DetachTotalsTracking(pending);
-            Ledgers.Remove(pending);
-        }
-
         var row = new MaterialLedger
         {
             // 日期与时间给出当天默认值，其余字段保持空白由用户直接在表格里填写
@@ -254,14 +333,114 @@ public partial class MaterialLedgerViewModel : ObservableObject
         Ledgers.Insert(0, row);
         RecalculateTotals();
 
-        StatusMessage = "已在表格首行插入空白记录，请直接填写后点击该行末的「保存」。";
-        _logger.LogInformation("已在表格首行插入空白台账行，当前列表 {Count} 条。", Ledgers.Count);
+        StatusMessage = "已在表格首行插入草稿行（浅绿底），填写完成后点击上方「保存」入库。";
+        _logger.LogInformation("已在表格首行插入草稿台账行，当前列表 {Count} 条。", Ledgers.Count);
     }
 
     /// <summary>
-    /// 保存一行：空白新增行执行插入，已有行执行更新；成功后重新加载列表。
+    /// 批量保存全部草稿行：先整体校验（名称必填、数量/单价非负），任一行不合法都不落库，
+    /// 草稿原样保留供修正并弹出失败提示；全部合法时逐行写入数据库，最后统一刷新一次列表。
     /// </summary>
-    /// <param name="row">表格中被点击「保存」的记录。</param>
+    [RelayCommand]
+    public void SaveAllDrafts()
+    {
+        var drafts = Ledgers.Where(x => x.IsNewRow).ToList();
+        if (drafts.Count == 0)
+        {
+            StatusMessage = "没有待保存的新增行。";
+            return;
+        }
+
+        var invalid = drafts.FirstOrDefault(d =>
+            string.IsNullOrWhiteSpace(d.MaterialName) || d.Quantity < 0 || d.UnitPrice < 0);
+        if (invalid is not null)
+        {
+            StatusMessage = string.IsNullOrWhiteSpace(invalid.MaterialName)
+                ? "有草稿行未填写物资名称，未保存；请补全后重试。"
+                : $"「{invalid.MaterialName}」行数量或单价为负数，未保存；请修正后重试。";
+            _logger.LogWarning("批量保存台账被拒绝：{Reason}。", StatusMessage);
+            SaveFailed?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        try
+        {
+            foreach (var draft in drafts)
+            {
+                // 表格内直接编辑的日期是自由文本，落库前统一规范成 yyyy-MM-dd，无法解析时回退当天
+                draft.EntryDate = NormalizeDate(draft.EntryDate);
+                draft.Amount = Math.Round(draft.Quantity * draft.UnitPrice, 2);
+                DatabaseService.Instance.AddMaterialLedger(draft);
+                draft.IsNewRow = false;
+            }
+
+            // 新增记录默认进第一页；统一 Load 一次，避免逐行保存反复刷新
+            CurrentPage = 1;
+            Load();
+
+            StatusMessage = $"已保存 {drafts.Count} 条新增台账。";
+            _logger.LogInformation("批量保存台账草稿成功，共 {Count} 条。", drafts.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "批量保存台账草稿失败。");
+            StatusMessage = $"保存失败：{ex.Message}";
+            SaveFailed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// 把当前可见列表按入库日期倒序重排（日期相同的行保持原相对顺序）。
+    /// 草稿行的日期文本先规范化，避免自由文本解析失败把行排到末尾。
+    /// </summary>
+    public void Resort()
+    {
+        foreach (var draft in Ledgers.Where(x => x.IsNewRow))
+        {
+            draft.EntryDate = NormalizeDate(draft.EntryDate);
+        }
+
+        var sorted = Ledgers
+            .Select((row, index) => (Row: row, Index: index, Key: TryParseDate(row.EntryDate)))
+            .OrderByDescending(x => x.Key)
+            .ThenBy(x => x.Index)
+            .Select(x => x.Row)
+            .ToList();
+
+        // 顺序未变化时直接返回，避免无谓的集合刷新打断表格状态
+        var changed = false;
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            if (!ReferenceEquals(sorted[i], Ledgers[i]))
+            {
+                changed = true;
+                break;
+            }
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        // 用 Move 保持元素实例不变，DataGrid 依据实例维护选中态与编辑态
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            var currentIndex = Ledgers.IndexOf(sorted[i]);
+            if (currentIndex != i)
+            {
+                Ledgers.Move(currentIndex, i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 保存一行：空白新增行执行插入后刷新列表，已有行执行原地更新（不重建集合）。
+    /// 已有行的保存由表格 RowEditEnded 自动触发，此时 DataGrid 正在结束行编辑，
+    /// 直接 Load 重建集合会触发 ObservableCollection 重入异常，因此只更新数据库与当前行对象；
+    /// OCR 等非表格事件场景的新增路径仍走 Load 以刷新分页与下拉选项。
+    /// </summary>
+    /// <param name="row">被保存的记录。</param>
     public void SaveRow(MaterialLedger? row)
     {
         if (row is null)
@@ -298,15 +477,18 @@ public partial class MaterialLedgerViewModel : ObservableObject
             {
                 DatabaseService.Instance.AddMaterialLedger(row);
                 row.IsNewRow = false;
-                // 新增的记录出现在第一页
+                // 新增的记录出现在第一页；Load 会重建集合并刷新下拉选项
                 CurrentPage = 1;
+                Load();
             }
             else
             {
                 DatabaseService.Instance.UpdateMaterialLedger(row);
+                // 原地更新：改过日期的行按日期倒序归位（顺序未变时 Resort 内部直接跳过）
+                Resort();
             }
 
-            Load();
+            RecalculateTotals();
 
             // Load 内部会改写提示文本，因此成功提示必须放在它之后，否则会被覆盖
             StatusMessage = isInsert
@@ -320,23 +502,6 @@ public partial class MaterialLedgerViewModel : ObservableObject
             StatusMessage = $"保存失败：{ex.Message}";
             SaveFailed?.Invoke(this, EventArgs.Empty);
         }
-    }
-
-    /// <summary>取消新增：把尚未入库的空白行从表格中移除。</summary>
-    /// <param name="row">表格中被点击「取消」的新增行。</param>
-    public void CancelNewRow(MaterialLedger? row)
-    {
-        if (row is null || !row.IsNewRow)
-        {
-            return;
-        }
-
-        DetachTotalsTracking(row);
-        Ledgers.Remove(row);
-        RecalculateTotals();
-
-        StatusMessage = "已取消新增。";
-        _logger.LogInformation("已移除未保存的表格新增行。");
     }
 
     /// <summary>删除指定行：从集合移除并同步删除数据库记录。</summary>
@@ -449,13 +614,14 @@ public partial class MaterialLedgerViewModel : ObservableObject
 
     /// <summary>
     /// 把 OCR 抽取字段填入表格首行的空白新增行。
-    /// 已有未保存的空行时先移除旧的，保证新填入的数据在最上方；
+    /// 先清掉完全空白的草稿行（避免残留空行占用表格），保留用户已填写内容的草稿；
     /// 「未识别」占位文本与空值都会跳过，避免污染待保存数据。
     /// </summary>
     /// <param name="fields"><see cref="ReceiptFieldExtractor.Extract"/> 的抽取结果。</param>
     public void ApplyOcrFields(IReadOnlyList<ReceiptField> fields)
     {
-        // 复用 NewRow 逻辑：内部会清理旧空行 + 创建新空行 + 加入集合
+        // 移除没有任何内容的草稿行后，新建一条干净的行供 OCR 字段填入
+        RemoveBlankDrafts();
         NewRow();
 
         var row = Ledgers.FirstOrDefault(x => x.IsNewRow);
@@ -569,6 +735,46 @@ public partial class MaterialLedgerViewModel : ObservableObject
         return DateTime.TryParse(value, out var parsed)
             ? parsed.ToString("yyyy-MM-dd")
             : DateTime.Now.ToString("yyyy-MM-dd");
+    }
+
+    /// <summary>解析日期文本用于排序；无法解析时回退 DateTime.MinValue（排到末尾）。</summary>
+    /// <param name="value">原始日期文本。</param>
+    /// <returns>解析出的日期。</returns>
+    private static DateTime TryParseDate(string value)
+    {
+        return DateTime.TryParse(value, out var parsed) ? parsed : DateTime.MinValue;
+    }
+
+    /// <summary>判断草稿行是否完全空白（所有录入列都没有内容），供 OCR 填入前清理。</summary>
+    /// <param name="row">待判断的行。</param>
+    /// <returns>完全空白返回 true。</returns>
+    private static bool IsBlankDraft(MaterialLedger row)
+    {
+        return string.IsNullOrWhiteSpace(row.MaterialName)
+            && string.IsNullOrWhiteSpace(row.DocNo)
+            && string.IsNullOrWhiteSpace(row.Specification)
+            && string.IsNullOrWhiteSpace(row.Unit)
+            && string.IsNullOrWhiteSpace(row.Handler)
+            && string.IsNullOrWhiteSpace(row.ProjectAddress)
+            && string.IsNullOrWhiteSpace(row.Remark)
+            && string.IsNullOrWhiteSpace(row.ProjectDept)
+            && string.IsNullOrWhiteSpace(row.ProjectPhase)
+            && row.Quantity == 0
+            && row.UnitPrice == 0;
+    }
+
+    /// <summary>移除全部完全空白的草稿行；用户已开始填写内容的草稿行保持原样。</summary>
+    private void RemoveBlankDrafts()
+    {
+        for (var i = Ledgers.Count - 1; i >= 0; i--)
+        {
+            var draft = Ledgers[i];
+            if (draft.IsNewRow && IsBlankDraft(draft))
+            {
+                DetachTotalsTracking(draft);
+                Ledgers.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>订阅单条记录的数量/单价变化，使表格内编辑后合计立即刷新。</summary>
