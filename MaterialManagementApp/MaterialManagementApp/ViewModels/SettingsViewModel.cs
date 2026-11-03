@@ -7,6 +7,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -59,14 +61,16 @@ public partial class SettingsViewModel : ObservableObject
     };
 
     /// <summary>AI 服务商下拉框预置选项，顺序与设置页 ComboBoxItem 一致；「自定义」不自动填充地址。</summary>
-    public string[] AiProviderOptions { get; } = { "DeepSeek", "Kimi", "通义千问", "Ollama", "自定义" };
+    public string[] AiProviderOptions { get; } = { "DeepSeek", "Kimi", "通义千问", "豆包", "Ollama", "自定义" };
 
     /// <summary>各在线服务商的默认服务地址与推荐模型，切换服务商时自动带入，减少手工输入。</summary>
     private static readonly Dictionary<string, (string BaseUrl, string ModelName)> _aiProviderDefaults = new()
     {
         ["DeepSeek"] = ("https://api.deepseek.com", "deepseek-chat"),
         ["Kimi"] = ("https://api.moonshot.cn/v1", "moonshot-v1-8k-vision-preview"),
-        ["通义千问"] = ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max")
+        ["通义千问"] = ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max"),
+        // 火山方舟（豆包）OpenAI 兼容入口；模型须为支持识图的视觉模型，也可填 ep-xxx 接入点 ID
+        ["豆包"] = ("https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-1-6-flash-250815")
     };
 
     /// <summary>在线 AI 连接测试专用客户端；静态复用避免频繁建连，短超时快速失败。</summary>
@@ -583,6 +587,62 @@ public partial class SettingsViewModel : ObservableObject
         }
 
         AiStatus = $"正在测试连接 {baseUrl} …";
+
+        // 火山方舟（豆包）的 /models 列表接口对普通 API Key 经常返回 404，
+        // 改用一次 max_tokens=1 的最小对话请求验证密钥与模型，费用可忽略不计
+        if (string.Equals(AiProvider, "豆包", StringComparison.Ordinal))
+        {
+            var modelName = (AiModelName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(modelName))
+            {
+                AiStatus = "请先填写模型名称（视觉模型或 ep-xxx 接入点 ID）再测试。";
+                return;
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new
+                        {
+                            model = modelName,
+                            messages = new[] { new { role = "user", content = "hi" } },
+                            max_tokens = 1,
+                            stream = false
+                        }),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                using var response = await _httpClient.SendAsync(request);
+                if (response.IsSuccessStatusCode)
+                {
+                    AiStatus = $"连接成功（{baseUrl}），API Key 与模型 {modelName} 均有效。";
+                    _logger.LogInformation("豆包连接测试成功：{BaseUrl}，模型={Model}。", baseUrl, modelName);
+                }
+                else if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    AiStatus = $"连接失败：API Key 无效或无权限（HTTP {(int)response.StatusCode}）。";
+                    _logger.LogWarning("豆包密钥校验失败：{BaseUrl}，HTTP {Code}。", baseUrl, (int)response.StatusCode);
+                }
+                else
+                {
+                    var detail = await response.Content.ReadAsStringAsync();
+                    AiStatus = $"连接失败：HTTP {(int)response.StatusCode} {response.ReasonPhrase}。{detail}";
+                    _logger.LogWarning("豆包连接测试失败：{BaseUrl}，HTTP {Code}。", baseUrl, (int)response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                AiStatus = $"连接失败：{ex.Message}";
+                _logger.LogWarning(ex, "豆包连接测试失败：{BaseUrl}。", baseUrl);
+            }
+
+            return;
+        }
+
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/models");

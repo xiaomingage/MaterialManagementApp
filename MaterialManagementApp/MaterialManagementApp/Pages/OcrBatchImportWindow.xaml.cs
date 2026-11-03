@@ -316,7 +316,10 @@ public sealed partial class OcrBatchImportWindow : Window
         }
     }
 
-    /// <summary>识别一张卡片：解码图片 → 离线 OCR → 全文与字段预填。</summary>
+    /// <summary>
+    /// 识别一张卡片：解码图片 → 按设置引擎识别（在线 AI → 本地 Ollama → 离线 PaddleOCR）→
+    /// 全文与字段预填。
+    /// </summary>
     /// <param name="item">待识别的卡片。</param>
     private async Task RecognizeItemAsync(BatchScanItem item)
     {
@@ -328,14 +331,37 @@ public sealed partial class OcrBatchImportWindow : Window
             using var stream = await file.OpenAsync(FileAccessMode.Read);
             var decoded = await OcrImageDecoder.DecodeAsync(stream);
 
-            var text = await PaddleOcrService.Instance.RecognizeAsync(decoded.Bgra, decoded.Width, decoded.Height);
+            // 读原始字节给视觉大模型识图用；读不到也能走离线识别，只是跳过 AI 引擎
+            byte[]? imageBytes = null;
+            try
+            {
+                imageBytes = await File.ReadAllBytesAsync(item.SourcePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "读取图片原始字节失败，本次将跳过 AI 引擎：{File}", item.SourcePath);
+            }
 
-            item.RawText = text;
-            ApplyExtractedFields(item, ReceiptFieldExtractor.Extract(text));
+            var result = await OcrEngineRouter.RecognizeAsync(imageBytes, decoded.Bgra, decoded.Width, decoded.Height);
+
+            // AI 引擎按 JSON 协议返回结构化字段：直接解析并展示 raw 原文；
+            // 解析失败（模型没按协议输出）回退正则抽取，离线引擎则始终走正则
+            var aiFields = ReceiptFieldExtractor.ParseAiStructured(result.Text);
+            var displayText = aiFields is not null
+                ? ReceiptFieldExtractor.TryReadAiRawText(result.Text) ?? result.Text
+                : result.Text;
+
+            item.RawText = displayText;
+            ApplyExtractedFields(item, aiFields ?? ReceiptFieldExtractor.Extract(displayText));
             item.RecognitionPending = false;
-            item.StatusText = string.IsNullOrWhiteSpace(text)
+            item.StatusText = string.IsNullOrWhiteSpace(displayText)
                 ? "未识别到文字，请直接在右侧字段中手动填写后保存。"
-                : "识别完成，请核对字段，有误可直接修改后保存。";
+                : $"识别完成（{result.EngineName}）。{result.FallbackNote}请核对字段，有误可直接修改后保存。";
+
+            if (result.FallbackNote is not null)
+            {
+                _logger.LogWarning("批量扫描识别发生引擎回退：{File}，{Note}", item.FileName, result.FallbackNote);
+            }
         }
         catch (Exception ex)
         {

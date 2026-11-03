@@ -338,16 +338,22 @@ public partial class MaterialLedgerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 批量保存全部草稿行：先整体校验（名称必填、数量/单价非负），任一行不合法都不落库，
-    /// 草稿原样保留供修正并弹出失败提示；全部合法时逐行写入数据库，最后统一刷新一次列表。
+    /// 批量保存全部草稿行：先剔除没有任何实际内容的空白草稿行（自动填的日期时间不算内容，
+    /// 点了一下新增但没填东西的行直接丢弃，不报错、不入库），再整体校验剩余行
+    /// （名称必填、数量/单价非负），任一行不合法都不落库，草稿原样保留供修正并弹出失败提示；
+    /// 全部合法时逐行写入数据库，最后统一刷新一次列表。
     /// </summary>
     [RelayCommand]
     public void SaveAllDrafts()
     {
+        // 自动填的日期/时间不算「已填写内容」，完全空白的草稿行保存时直接丢弃
+        RemoveBlankDrafts();
+
         var drafts = Ledgers.Where(x => x.IsNewRow).ToList();
         if (drafts.Count == 0)
         {
-            StatusMessage = "没有待保存的新增行。";
+            StatusMessage = "新增行没有填写任何内容（自动日期不算），已忽略，未保存。";
+            _logger.LogInformation("保存台账草稿被跳过：不存在有内容的草稿行。");
             return;
         }
 
@@ -445,6 +451,18 @@ public partial class MaterialLedgerViewModel : ObservableObject
     {
         if (row is null)
         {
+            return;
+        }
+
+        // 空白草稿行（只带了自动填的日期/时间）离开编辑时直接丢弃：
+        // 不保存、不弹错、不入库，避免用户点了一下新增又没填内容时产生脏数据
+        if (row.IsNewRow && IsBlankDraft(row))
+        {
+            DetachTotalsTracking(row);
+            Ledgers.Remove(row);
+            RecalculateTotals();
+            StatusMessage = "新增行没有填写内容（自动日期不算），已自动丢弃。";
+            _logger.LogInformation("空白草稿行离开编辑，已自动丢弃，不写数据库。");
             return;
         }
 
@@ -745,7 +763,10 @@ public partial class MaterialLedgerViewModel : ObservableObject
         return DateTime.TryParse(value, out var parsed) ? parsed : DateTime.MinValue;
     }
 
-    /// <summary>判断草稿行是否完全空白（所有录入列都没有内容），供 OCR 填入前清理。</summary>
+    /// <summary>
+    /// 判断草稿行是否完全空白（所有录入列都没有内容），供保存时清理。
+    /// 进场日期/时间是点新增时自动填的默认值，不算「已填写内容」。
+    /// </summary>
     /// <param name="row">待判断的行。</param>
     /// <returns>完全空白返回 true。</returns>
     private static bool IsBlankDraft(MaterialLedger row)
@@ -755,6 +776,8 @@ public partial class MaterialLedgerViewModel : ObservableObject
             && string.IsNullOrWhiteSpace(row.Specification)
             && string.IsNullOrWhiteSpace(row.Unit)
             && string.IsNullOrWhiteSpace(row.Handler)
+            && string.IsNullOrWhiteSpace(row.Supplier)
+            && string.IsNullOrWhiteSpace(row.PlateNumber)
             && string.IsNullOrWhiteSpace(row.ProjectAddress)
             && string.IsNullOrWhiteSpace(row.Remark)
             && string.IsNullOrWhiteSpace(row.ProjectDept)

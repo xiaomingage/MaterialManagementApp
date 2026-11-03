@@ -124,6 +124,110 @@ public static class ReceiptFieldExtractor
     // ---------------------------------------------------------------------
 
     /// <summary>
+    /// AI 结构化字段顺序：与视觉模型 JSON 协议的 fields 键一致，也决定界面字段展示顺序。
+    /// </summary>
+    private static readonly string[] StructuredLabels =
+    {
+        "物资名称", "规格", "数量", "单位", "进场日期", "单据编号", "供应商", "经办人", "车牌号"
+    };
+
+    /// <summary>
+    /// 解析视觉大模型按 JSON 协议返回的结构化识别结果（在线 AI / 本地 Ollama 视觉识别）。
+    /// 大模型直接看图抽字段，准确率远高于「OCR 全文 → 正则」两步走；
+    /// 解析失败（模型没按协议输出、JSON 损坏等）返回 null，由调用方回退 <see cref="Extract"/> 正则抽取。
+    /// </summary>
+    /// <param name="aiText">模型返回的全文，应为 {"fields":{...},"raw":"..."}，兼容 ```json 包裹与裸对象。</param>
+    /// <returns>字段列表；无法解析时返回 null。</returns>
+    public static IReadOnlyList<ReceiptField>? ParseAiStructured(string aiText)
+    {
+        var source = aiText ?? string.Empty;
+
+        // 容错定位 JSON 体：模型偶尔会带 ```json 代码块标记或前后缀说明
+        var start = source.IndexOf('{');
+        var end = source.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(source[start..(end + 1)]);
+            var root = document.RootElement;
+
+            // 协议主体在 fields 键下；模型直接输出字段平铺对象时也兜底支持
+            System.Text.Json.JsonElement fieldsElement;
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object
+                && root.TryGetProperty("fields", out var fields) && fields.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                fieldsElement = fields;
+            }
+            else if (root.ValueKind == System.Text.Json.JsonValueKind.Object
+                && root.TryGetProperty("物资名称", out _))
+            {
+                fieldsElement = root;
+            }
+            else
+            {
+                return null;
+            }
+
+            var list = new List<ReceiptField>(StructuredLabels.Length);
+            foreach (var label in StructuredLabels)
+            {
+                var value = fieldsElement.TryGetProperty(label, out var item)
+                            && item.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? item.GetString() ?? string.Empty
+                    : string.Empty;
+                Add(list, label, value);
+            }
+
+            Logger.LogInformation("AI 结构化字段解析成功，命中 {Hit}/{Total} 项。",
+                list.Count(f => !string.Equals(f.Value, NotFound, StringComparison.Ordinal)), list.Count);
+            return list;
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            Logger.LogWarning(ex, "AI 结构化结果 JSON 解析失败，回退正则抽取。");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从 AI 结构化结果中取出 raw 原文字段（按单据原版式整理的全文），供界面展示与「重提字段」兜底；
+    /// 模型没有输出 raw 时返回 null。
+    /// </summary>
+    /// <param name="aiText">模型返回的全文。</param>
+    /// <returns>raw 原文；缺失时返回 null。</returns>
+    public static string? TryReadAiRawText(string aiText)
+    {
+        var source = aiText ?? string.Empty;
+        var start = source.IndexOf('{');
+        var end = source.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(source[start..(end + 1)]);
+            if (document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && document.RootElement.TryGetProperty("raw", out var raw)
+                && raw.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return raw.GetString();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // 非 JSON 文本按无 raw 处理，调用方展示原文即可
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// 从识别全文中抽取各业务字段。返回顺序即界面展示顺序，未识别到的字段值为 <see cref="NotFound"/>。
     /// </summary>
     /// <param name="text">OCR 识别全文。</param>

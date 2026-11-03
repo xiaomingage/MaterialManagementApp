@@ -36,6 +36,9 @@ public sealed partial class OcrImportWindow : Window
     /// <summary>当前图片解码后的 BGRA32 像素数据；为 null 表示尚未载入图片。</summary>
     private byte[]? _imageBgra;
 
+    /// <summary>当前图片的原始文件字节，供在线 AI / 本地 Ollama 视觉模型识别；为 null 时只能走离线引擎。</summary>
+    private byte[]? _imageBytes;
+
     /// <summary>当前图片宽度（像素）。</summary>
     private int _imageWidth;
 
@@ -196,6 +199,7 @@ public sealed partial class OcrImportWindow : Window
     private void OnClearClick(object sender, RoutedEventArgs e)
     {
         _imageBgra = null;
+        _imageBytes = null;
         _imageWidth = 0;
         _imageHeight = 0;
 
@@ -304,11 +308,48 @@ public sealed partial class OcrImportWindow : Window
         _imageWidth = decoded.Width;
         _imageHeight = decoded.Height;
 
+        // 读一份原始字节给视觉大模型（在线 AI / Ollama）直接识图用；读不到也不影响离线识别
+        try
+        {
+            _imageBytes = await ReadAllBytesAsync(stream);
+        }
+        catch (Exception ex)
+        {
+            _imageBytes = null;
+            _logger.LogWarning(ex, "读取图片原始字节失败，本次将跳过 AI 引擎直接离线识别。");
+        }
+
         SetStatus($"已载入图片：{sourceName}（{_imageWidth} × {_imageHeight}）。");
         await RecognizeAsync();
     }
 
-    /// <summary>调用内嵌离线 OCR 引擎识别当前图片，并刷新字段与全文。</summary>
+    /// <summary>把随机访问流整体读为字节数组；读完后流会被回卷到起点供后续解码复用。</summary>
+    /// <param name="stream">图片来源流。</param>
+    /// <returns>图片完整字节。</returns>
+    private static async Task<byte[]> ReadAllBytesAsync(IRandomAccessStream stream)
+    {
+        stream.Seek(0);
+        var reader = new DataReader(stream);
+        try
+        {
+            await reader.LoadAsync((uint)stream.Size);
+            var bytes = new byte[(int)stream.Size];
+            reader.ReadBytes(bytes);
+            return bytes;
+        }
+        finally
+        {
+            // 解除与底层流的关联再释放，避免连带关闭调用方后续还要使用的流
+            reader.DetachStream();
+            reader.Dispose();
+            stream.Seek(0);
+        }
+    }
+
+    /// <summary>
+    /// 按设置页选择的引擎识别当前图片（在线 AI → 本地 Ollama → 离线 PaddleOCR 自动路由与回退），
+    /// 并刷新字段与全文。
+    /// </summary>
     /// <returns>识别完成的异步任务。</returns>
     private async Task RecognizeAsync()
     {
@@ -322,22 +363,27 @@ public sealed partial class OcrImportWindow : Window
 
         try
         {
-            SetStatus(PaddleOcrService.Instance.IsEngineLoaded
-                ? "正在识别单据文字..."
-                : "首次识别需要加载离线 OCR 模型，请稍候...");
+            SetStatus("正在识别单据文字...");
 
-            var text = await PaddleOcrService.Instance.RecognizeAsync(_imageBgra, _imageWidth, _imageHeight);
+            var result = await OcrEngineRouter.RecognizeAsync(_imageBytes, _imageBgra, _imageWidth, _imageHeight);
 
-            RawTextBox.Text = text;
-            var fields = ReceiptFieldExtractor.Extract(text);
+            // AI 引擎按 JSON 协议返回结构化字段：直接解析并展示 raw 原文；
+            // 解析失败（模型没按协议输出）回退正则抽取，离线引擎则始终走正则
+            var aiFields = ReceiptFieldExtractor.ParseAiStructured(result.Text);
+            var displayText = aiFields is not null
+                ? ReceiptFieldExtractor.TryReadAiRawText(result.Text) ?? result.Text
+                : result.Text;
+
+            RawTextBox.Text = displayText;
+            var fields = aiFields ?? ReceiptFieldExtractor.Extract(displayText);
             UpdateFields(fields);
 
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(displayText))
             {
                 OcrProgress.IsIndeterminate = false;
                 OcrProgress.Value = 0;
                 SetStatus("未从图片中识别到文字，请确认图片清晰度后重试。");
-                _logger.LogWarning("OCR 未识别到任何文字。");
+                _logger.LogWarning("OCR 未识别到任何文字，引擎={Engine}。", result.EngineName);
                 FillButton.IsEnabled = false;
             }
             else
@@ -346,7 +392,7 @@ public sealed partial class OcrImportWindow : Window
                 OcrProgress.Value = 100;
                 _lastFields = fields;
                 FillButton.IsEnabled = true;
-                SetStatus("识别完成，请核对下方抽取字段，确认无误后点击「填入表格」。");
+                SetStatus($"识别完成（{result.EngineName}）。{result.FallbackNote}请核对下方抽取字段，确认无误后点击「填入表格」。");
             }
         }
         catch (Exception ex)
@@ -355,7 +401,7 @@ public sealed partial class OcrImportWindow : Window
             OcrProgress.IsIndeterminate = false;
             OcrProgress.Value = 0;
             SetStatus($"识别失败：{ex.Message}");
-            _logger.LogError(ex, "离线 OCR 识别失败。");
+            _logger.LogError(ex, "单据识别失败。");
         }
         finally
         {

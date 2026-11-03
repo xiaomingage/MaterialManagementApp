@@ -277,20 +277,16 @@ CREATE TABLE IF NOT EXISTS DbVersion (
     public string DatabasePath => _databasePath;
 
     /// <summary>
-    /// 台账扫描图片的存储目录：数据库文件同目录下的 LedgerImages 子目录。
-    /// 图片与数据库放在一起，换机或迁移时把数据目录整体拷走图片不丢。
+    /// 台账扫描图片的存储目录：安装数据目录（安装向导选择的数据根目录；未安装时为程序目录\Data）
+    /// 下独立的 LedgerImages 文件夹。图片固定随软件安装目录走，不跟随数据库自定义路径，
+    /// 换机或迁移时把 Data 目录整体拷走图片不丢；历史记录中的旧路径仍按原样打开不受影响。
     /// </summary>
     public string LedgerImageDir
     {
         get
         {
-            var dbDir = Path.GetDirectoryName(_databasePath);
-            if (string.IsNullOrWhiteSpace(dbDir))
-            {
-                dbDir = AppContext.BaseDirectory;
-            }
-
-            return Path.Combine(dbDir, "LedgerImages");
+            var dataRoot = AppPaths.DataRoot ?? AppPaths.ProgramDataDir;
+            return Path.Combine(dataRoot, "LedgerImages");
         }
     }
 

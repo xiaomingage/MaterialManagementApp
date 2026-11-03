@@ -17,7 +17,7 @@
 
 #define MyAppName "物资管理系统"
 #define MyAppNameEn "MaterialManagementApp"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.6.0"
 #define MyAppPublisher "MaterialManagementApp"
 #define MyAppExeName "MaterialManagementApp.exe"
 ; 发布产物目录（dotnet publish -c Release -r win-x64 的输出，相对本脚本所在目录）
