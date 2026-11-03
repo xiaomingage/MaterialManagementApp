@@ -270,6 +270,13 @@ CREATE TABLE IF NOT EXISTS DbVersion (
     {
     }
 
+    /// <summary>测试专用构造：直接指定数据库文件路径并跳过配置解析（internal，仅单元测试可见）。</summary>
+    /// <param name="testDatabasePath">临时数据库文件绝对路径。</param>
+    internal DatabaseService(string testDatabasePath)
+    {
+        _databasePath = testDatabasePath;
+    }
+
     /// <summary>全局唯一实例。</summary>
     public static DatabaseService Instance => _instance.Value;
 
@@ -372,7 +379,8 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             _initializing = true;
             try
             {
-                _databasePath = ResolveDatabasePath();
+                // 测试构造直接指定路径时不再重新解析（保持测试库隔离），生产路径为空时才解析配置
+                _databasePath = string.IsNullOrEmpty(_databasePath) ? ResolveDatabasePath() : _databasePath;
 
                 // Cache=Shared 让多个短连接共享同一份页缓存，避免频繁开关连接时的读写冲突
                 _connectionString = new SqliteConnectionStringBuilder
@@ -497,6 +505,14 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             using var alterCommand = connection.CreateCommand();
             alterCommand.CommandText = $"ALTER TABLE MaterialLedger ADD COLUMN {column} TEXT NOT NULL DEFAULT '';";
             alterCommand.ExecuteNonQuery();
+        }
+
+        // 软删除标记列：0=正常，1=已删除（删除可撤销）。老库补列，默认 0 表示全部未删除
+        if (!existing.Contains("IsDeleted"))
+        {
+            using var softDeleteCommand = connection.CreateCommand();
+            softDeleteCommand.CommandText = "ALTER TABLE MaterialLedger ADD COLUMN IsDeleted INTEGER NOT NULL DEFAULT 0;";
+            softDeleteCommand.ExecuteNonQuery();
         }
     }
 
@@ -812,7 +828,8 @@ CREATE TABLE IF NOT EXISTS DbVersion (
     /// <returns>台账列表；无数据时返回空集合。</returns>
     public List<MaterialLedger> GetMaterialLedgers()
     {
-        return Query<MaterialLedger>("SELECT * FROM MaterialLedger ORDER BY EntryDate DESC, Id DESC;");
+        // 软删除的记录不进入业务列表，仅留在库里供「撤销删除」恢复
+        return Query<MaterialLedger>("SELECT * FROM MaterialLedger WHERE IsDeleted = 0 ORDER BY EntryDate DESC, Id DESC;");
     }
 
     /// <summary>新增一条物资台账记录。</summary>
@@ -877,12 +894,123 @@ CREATE TABLE IF NOT EXISTS DbVersion (
         });
     }
 
-    /// <summary>按 Id 删除物资台账记录。</summary>
+    /// <summary>按 Id 软删除物资台账记录：仅打 IsDeleted 标记，数据保留在库中以便撤销。</summary>
     /// <param name="id">要删除的记录主键。</param>
     /// <returns>受影响行数，0 表示记录不存在。</returns>
     public int DeleteMaterialLedger(int id)
     {
-        return DeleteRow("MaterialLedger", id);
+        return ExecuteNonQuery(
+            "UPDATE MaterialLedger SET IsDeleted = 1 WHERE Id = @id AND IsDeleted = 0;",
+            new Dictionary<string, object?> { ["@id"] = id });
+    }
+
+    /// <summary>撤销软删除：把已删除的台账记录恢复为正常状态。</summary>
+    /// <param name="id">要恢复的记录主键。</param>
+    /// <returns>受影响行数，0 表示记录不存在或本来就未删除。</returns>
+    public int RestoreMaterialLedger(int id)
+    {
+        return ExecuteNonQuery(
+            "UPDATE MaterialLedger SET IsDeleted = 0 WHERE Id = @id AND IsDeleted = 1;",
+            new Dictionary<string, object?> { ["@id"] = id });
+    }
+
+    /// <summary>按主键集合批量软删除台账记录（表格勾选行删除）。</summary>
+    /// <param name="ids">要删除的记录主键集合。</param>
+    /// <returns>实际删除的行数。</returns>
+    public int DeleteMaterialLedgers(IEnumerable<int> ids)
+    {
+        var count = 0;
+        foreach (var id in ids)
+        {
+            count += DeleteMaterialLedger(id);
+        }
+
+        return count;
+    }
+
+    /// <summary>台账批量修改允许写入的列白名单：列名只能来自代码常量，杜绝注入。</summary>
+    private static readonly string[] MaterialLedgerBatchColumns = { "ProjectDept", "ProjectPhase", "Handler" };
+
+    /// <summary>按主键集合批量更新台账的单一字段（项目部 / 期数 / 经办人）。</summary>
+    /// <param name="ids">要更新的记录主键集合。</param>
+    /// <param name="columnName">目标列名，必须在 <see cref="MaterialLedgerBatchColumns"/> 白名单内。</param>
+    /// <param name="value">写入的新值。</param>
+    /// <returns>受影响行数；列名不在白名单时抛出异常。</returns>
+    public int UpdateMaterialLedgerBatch(IReadOnlyCollection<int> ids, string columnName, string value)
+    {
+        if (!MaterialLedgerBatchColumns.Contains(columnName))
+        {
+            throw new ArgumentException($"台账不支持批量修改字段：{columnName}", nameof(columnName));
+        }
+
+        if (ids.Count == 0)
+        {
+            return 0;
+        }
+
+        // 主键集合全部走参数，不做字符串拼接
+        var parameters = new Dictionary<string, object?> { ["@value"] = value };
+        var idPlaceholders = new List<string>(ids.Count);
+        var index = 0;
+        foreach (var id in ids)
+        {
+            var name = $"@id{index++}";
+            idPlaceholders.Add(name);
+            parameters[name] = id;
+        }
+
+        return ExecuteNonQuery(
+            $"UPDATE MaterialLedger SET {columnName} = @value "
+            + $"WHERE IsDeleted = 0 AND Id IN ({string.Join(", ", idPlaceholders)});",
+            parameters);
+    }
+
+    /// <summary>按前缀联想查询台账中已有的物资名称（去重、取前 10 条），供录入时下拉补全。</summary>
+    /// <param name="prefix">用户已输入的前缀；空串时返回最近用过的名称。</param>
+    /// <returns>候选物资名称列表。</returns>
+    public List<string> GetMaterialNameSuggestions(string prefix)
+    {
+        return QuerySingleColumn(
+            "SELECT DISTINCT MaterialName FROM MaterialLedger "
+            + "WHERE IsDeleted = 0 AND MaterialName LIKE @prefix "
+            + "ORDER BY MaterialName LIMIT 10;",
+            (prefix ?? string.Empty) + "%");
+    }
+
+    /// <summary>按前缀联想查询台账中已有的经办人姓名（去重、取前 10 条），供录入时下拉补全。</summary>
+    /// <param name="prefix">用户已输入的前缀；空串时返回最近出现过的经办人。</param>
+    /// <returns>候选经办人姓名列表。</returns>
+    public List<string> GetHandlerSuggestions(string prefix)
+    {
+        return QuerySingleColumn(
+            "SELECT DISTINCT Handler FROM MaterialLedger "
+            + "WHERE IsDeleted = 0 AND Handler != '' AND Handler LIKE @prefix "
+            + "ORDER BY Handler LIMIT 10;",
+            (prefix ?? string.Empty) + "%");
+    }
+
+    /// <summary>执行返回单列字符串的查询（通用 Query 按 reflect 映射实体列，不适用于 string 结果集）。</summary>
+    /// <param name="sql">单列 SELECT 语句。</param>
+    /// <param name="prefix">LIKE 前缀参数值。</param>
+    /// <returns>第一列字符串集合。</returns>
+    private List<string> QuerySingleColumn(string sql, string prefix)
+    {
+        var results = new List<string>();
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameters(command, new Dictionary<string, object?> { ["@prefix"] = prefix });
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (!reader.IsDBNull(0))
+            {
+                results.Add(reader.GetString(0));
+            }
+        }
+
+        return results;
     }
 
     /// <summary>读取全部小型机具台账记录，按 Id 倒序排列。</summary>
@@ -2497,6 +2625,13 @@ ORDER BY WriteOffMonth DESC;";
             ("EntryDate", dateFrom, dateTo),
             new[] { ("MaterialName", "@materialName", materialName) },
             Array.Empty<(string, string, string?)>());
+
+        // 软删除的记录不参与列表/统计口径（常量 0，无注入风险）
+        var where = string.IsNullOrWhiteSpace(baseFilter.Where)
+            ? "IsDeleted = 0"
+            : baseFilter.Where + " AND IsDeleted = 0";
+        baseFilter.Where = where;
+
         return AppendDeptPhaseFilter(baseFilter, projectDept, projectPhase);
     }
 

@@ -6,357 +6,27 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:MaterialManagementApp.Models"
+    xmlns:controls="using:CommunityToolkit.WinUI.UI.Controls"
+    xmlns:vm="using:MaterialManagementApp.ViewModels"
+    xmlns:local="using:MaterialManagementApp.Pages"
     Loaded="Page_Loaded"
     mc:Ignorable="d">
 
-    <ScrollViewer>
-        <StackPanel Padding="24" Spacing="16" MaxWidth="760" HorizontalAlignment="Left">
-            <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
-
-            <!-- 库存预警 -->
+    <!-- 设置页二级导航：左分类列表 + 右内容区；右侧经 DataTemplateSelector 按 SelectedSection.Key 切换模板 -->
+    <Page.Resources>
+        <DataTemplate x:Key="GeneralSectionTemplate" x:DataType="vm:SettingsSection">
+            <StackPanel Spacing="16">
+            <!-- 界面主题（外观） -->
             <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="库存预警" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="库存数量低于该阈值时，会在工作台与库存预警页中提示。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <!-- NumberBox.Value 是 double，属性是 int，x:Bind 无法隐式转换，故用经典 Binding -->
-                    <NumberBox
-                        Header="低库存阈值（1 - 9999）"
-                        Minimum="1"
-                        Maximum="9999"
-                        SpinButtonPlacementMode="Compact"
-                        Value="{Binding LowStockThreshold, Mode=TwoWay}" />
-                </StackPanel>
-            </Border>
-
-            <!-- 单据默认值 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="单据默认值" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="新建单据时会自动带入这些值，减少重复录入。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <TextBox Header="工程名称" Text="{x:Bind ViewModel.ProjectName, Mode=TwoWay}" />
-                    <TextBox Header="使用单位" Text="{x:Bind ViewModel.UsingUnit, Mode=TwoWay}" />
-                    <TextBox Header="默认计量单位" Text="{x:Bind ViewModel.DefaultUnit, Mode=TwoWay}" />
-                    <TextBox Header="默认经办人" Text="{x:Bind ViewModel.DefaultHandler, Mode=TwoWay}" />
-                </StackPanel>
-            </Border>
-
-            <!-- 数据库 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="数据库" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="点击「选择数据库文件」选取要加载的 .db 文件；不选择则使用程序目录下默认文件，修改后重启程序生效。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <TextBlock Text="当前使用的数据库文件" FontWeight="SemiBold" />
-                    <TextBlock
-                        Text="{x:Bind ViewModel.DatabasePath, Mode=OneWay}"
-                        IsTextSelectionEnabled="True"
-                        TextWrapping="Wrap" />
-                    <TextBlock
-                        Text="默认存放目录："
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                    <TextBlock
-                        Text="{x:Bind ViewModel.DefaultDatabaseFolder, Mode=OneWay}"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        IsTextSelectionEnabled="True"
-                        TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="选择数据库文件…" Command="{x:Bind ViewModel.BrowseDatabaseFileCommand}" />
-                        <Button
-                            Content="恢复默认位置"
-                            Command="{x:Bind ViewModel.RestoreDefaultDatabaseCommand}"
-                            Visibility="{x:Bind ViewModel.RestoreDefaultDatabaseVisibility, Mode=OneWay}" />
-                        <Button Content="备份数据库" Command="{x:Bind ViewModel.BackupDatabaseCommand}" />
-                        <Button Content="打开所在文件夹" Command="{x:Bind ViewModel.OpenDatabaseFolderCommand}" />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- 配置文件 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="配置文件" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="点击「选择配置文件」选取要加载的 settings.json；不选择则使用程序目录下默认文件，修改后重启程序生效。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <TextBlock Text="当前使用的配置文件" FontWeight="SemiBold" />
-                    <TextBlock
-                        Text="{x:Bind ViewModel.SettingsFilePath, Mode=OneWay}"
-                        IsTextSelectionEnabled="True"
-                        TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="选择配置文件…" Command="{x:Bind ViewModel.BrowseSettingsFileCommand}" />
-                        <Button
-                            Content="恢复默认位置"
-                            Command="{x:Bind ViewModel.RestoreDefaultSettingsFileCommand}"
-                            Visibility="{x:Bind ViewModel.RestoreDefaultSettingsVisibility, Mode=OneWay}" />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- 项目部与期数 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="项目部与期数" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="项目部（如信宜、梧州）与期数（如一期、二期）是通用业务维度：期数不与项目部绑定，任何记录可任选期数或留空，留空表示该记录没有期数（如梧州项目）。勾选适用栏目后会自动为对应数据表补上项目部/期数两列；取消勾选仅隐藏界面入口，历史数据保留。目前仅物资台账、渣土运输、自购物资完成了录入与筛选界面接入，其余栏目勾选后仅数据列就绪。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-
-                    <!-- 项目部管理：行内直接改名，点「保存」入库并级联更新业务记录 -->
-                    <TextBlock Text="项目部管理" FontWeight="SemiBold" />
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.ProjectDepts, Mode=OneWay}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="models:ProjectDept">
-                                <Grid Margin="0,2" ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox
-                                        Grid.Column="0"
-                                        VerticalAlignment="Center"
-                                        Text="{x:Bind Name, Mode=TwoWay}" />
-                                    <Button
-                                        Grid.Column="1"
-                                        Content="保存"
-                                        Click="OnSaveDeptClick" />
-                                    <Button
-                                        Grid.Column="2"
-                                        Content="删除"
-                                        Click="OnDeleteDeptClick" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox
-                            Grid.Column="0"
-                            PlaceholderText="新增项目部名称"
-                            Text="{x:Bind ViewModel.NewDeptName, Mode=TwoWay}" />
-                        <Button
-                            Grid.Column="1"
-                            Content="添加"
-                            Click="OnAddDeptClick"
-                            Style="{ThemeResource AccentButtonStyle}" />
-                    </Grid>
-
-                    <!-- 期数管理：不与项目部绑定，列表结构同项目部 -->
-                    <TextBlock Text="期数管理" FontWeight="SemiBold" />
-                    <TextBlock
-                        Text="期数由你自由维护，不与具体项目部绑定；录入时选择「无」表示该记录没有期数。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.ProjectPhases, Mode=OneWay}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="models:ProjectPhase">
-                                <Grid Margin="0,2" ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox
-                                        Grid.Column="0"
-                                        VerticalAlignment="Center"
-                                        Text="{x:Bind Name, Mode=TwoWay}" />
-                                    <Button
-                                        Grid.Column="1"
-                                        Content="保存"
-                                        Click="OnSavePhaseClick" />
-                                    <Button
-                                        Grid.Column="2"
-                                        Content="删除"
-                                        Click="OnDeletePhaseClick" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox
-                            Grid.Column="0"
-                            PlaceholderText="新增期数名称（如四期）"
-                            Text="{x:Bind ViewModel.NewPhaseName, Mode=TwoWay}" />
-                        <Button
-                            Grid.Column="1"
-                            Content="添加"
-                            Click="OnAddPhaseClick"
-                            Style="{ThemeResource AccentButtonStyle}" />
-                    </Grid>
-
-                    <!-- 适用栏目：勾选即自动补列迁移，取消仅隐藏界面、保留数据 -->
-                    <TextBlock Text="适用栏目" FontWeight="SemiBold" />
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.DeptPhaseTables, Mode=OneWay}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="models:DeptPhaseApplicableTable">
-                                <CheckBox
-                                    Margin="0,2"
-                                    Click="OnDeptPhaseTableToggleClick"
-                                    Content="{x:Bind DisplayName}"
-                                    IsChecked="{x:Bind IsEnabled, Mode=TwoWay}" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- OCR 识别引擎配置 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="识别引擎 (OCR)" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <!-- 单选框无法直接双向绑定字符串，沿用 ThemeIndex 模式：索引在 VM 内与 OcrEngineMode 双向联动 -->
-                    <RadioButtons SelectedIndex="{x:Bind ViewModel.OcrEngineIndex, Mode=TwoWay}">
-                        <RadioButton AutomationProperties.Name="本地离线识别">
-                            <StackPanel Orientation="Vertical" Spacing="2">
-                                <TextBlock Text="本地离线识别 (Paddle/Ollama)" />
-                                <TextBlock
-                                    Text="免费、断网可用"
-                                    Style="{ThemeResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton AutomationProperties.Name="在线 AI 识别">
-                            <StackPanel Orientation="Vertical" Spacing="2">
-                                <TextBlock Text="在线 AI 识别" />
-                                <TextBlock
-                                    Text="需联网、准确率极高、按量计费"
-                                    Style="{ThemeResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                            </StackPanel>
-                        </RadioButton>
-                    </RadioButtons>
-                </StackPanel>
-            </Border>
-
-            <!-- AI 大模型接入配置 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="AI 大模型接入" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="配置后，导入复杂单据时将优先调用 AI 识别。API Key 仅保存在本地。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <!-- 切换服务商时 VM 会自动带入该服务商的默认 Base URL 与模型名（Ollama / 自定义除外） -->
-                    <ComboBox
-                        Header="AI 服务商"
-                        HorizontalAlignment="Stretch"
-                        ItemsSource="{x:Bind ViewModel.AiProviderOptions, Mode=OneTime}"
-                        SelectedItem="{x:Bind ViewModel.AiProvider, Mode=TwoWay}" />
-                    <!-- 仅选择 Ollama 时显示本机服务配置，其余服务商 Collapsed 保持界面整洁 -->
-                    <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.OllamaFieldsVisibility, Mode=OneWay}">
-                        <TextBox Header="Ollama 服务地址" Text="{x:Bind ViewModel.OllamaUrl, Mode=TwoWay}" />
-                        <!-- IsEditable 的 ComboBox 既可下拉选择预置模型，也可直接手动输入其它模型名 -->
-                        <ComboBox
-                            Header="Ollama 模型名称（下拉选择或手动输入）"
-                            HorizontalAlignment="Stretch"
-                            IsEditable="True"
-                            ItemsSource="{x:Bind ViewModel.OllamaModelOptions, Mode=OneWay}"
-                            Text="{x:Bind ViewModel.OllamaModel, Mode=TwoWay}" />
-                    </StackPanel>
-                    <TextBox Header="API Base URL" Text="{x:Bind ViewModel.AiBaseUrl, Mode=TwoWay}" />
-                    <PasswordBox Header="API Key" Password="{x:Bind ViewModel.AiApiKey, Mode=TwoWay}" />
-                    <TextBlock
-                        Text="API Key 经 Windows 加密后保存在本地配置文件中，绝不会上传到任何服务器；配置拷贝到其他电脑时需重新填写 Key"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        TextWrapping="Wrap" />
-                    <TextBox Header="模型名称" Text="{x:Bind ViewModel.AiModelName, Mode=TwoWay}" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="测试连接" Command="{x:Bind ViewModel.TestAiConnectionCommand}" />
-                        <Button
-                            Content="保存配置"
-                            Command="{x:Bind ViewModel.SaveCommand}"
-                            Style="{ThemeResource AccentButtonStyle}" />
-                        <Button Content="取消" Command="{x:Bind ViewModel.CancelCommand}" />
-                    </StackPanel>
-                    <TextBlock
-                        Text="{x:Bind ViewModel.AiStatus, Mode=OneWay}"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
-            <!-- 数据库备份 -->
-            <Border
-                Style="{StaticResource StatCardBorderStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="数据库备份" Style="{ThemeResource SubtitleTextBlockStyle}" />
-                    <TextBlock
-                        Text="数据库默认保存在程序所在目录的 Data 文件夹内，数据随软件走；也可在下方手动指定其他位置。旧版本安装程序指定过数据目录的，将继续沿用该目录。每次数据库版本升级前会自动备份到本机应用数据目录（%LOCALAPPDATA%\MaterialSystem\Backup）——备份放在程序目录之外，程序目录被覆盖或误删时依然完好；超出保留份数的最旧备份自动清理。卸载软件时若程序目录中仍有 Data 文件夹，卸载程序会自动把它移至 %LOCALAPPDATA%\MaterialSystem 下保存。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="手动备份" Click="OnManualBackupClick" />
-                        <Button
-                            Content="从备份恢复"
-                            Click="OnRestoreBackupClick" />
-                        <!-- NumberBox.Value 为 double、配置字段为 int，沿用页面底部的经典 Binding 约定 -->
-                        <NumberBox
-                            Header="备份保留份数"
-                            Width="180"
-                            Margin="16,0,0,0"
-                            Minimum="1"
-                            Maximum="99"
-                            SpinButtonPlacementMode="Compact"
-                            Value="{Binding BackupRetentionCount, Mode=TwoWay}" />
-                    </StackPanel>
-                    <TextBlock
-                        Text="备份保留份数修改后需点击「AI 大模型接入」卡片中的「保存配置」或页面底部「保存」按钮才会生效。"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        TextWrapping="Wrap" />
-                    <TextBlock
-                        Text="{x:Bind ViewModel.BackupStatus, Mode=OneWay}"
-                        Style="{ThemeResource CaptionTextBlockStyle}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
-            <!-- 界面主题 -->
-            <Border
+                x:Name="SecTheme"
                 Style="{StaticResource StatCardBorderStyle}">
                 <StackPanel Spacing="12">
                     <TextBlock Text="界面主题" Style="{ThemeResource SubtitleTextBlockStyle}" />
                     <!-- ThemeIndex 与 ThemeViewModel.ThemeIndex 同为 int，x:Bind 可直接双向绑定 -->
                     <ComboBox
                         Header="界面主题"
-                        HorizontalAlignment="Stretch"
+                        MaxWidth="420"
+                        HorizontalAlignment="Left"
                         SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}">
                         <ComboBoxItem Content="浅色" />
                         <ComboBoxItem Content="深色" />
@@ -451,6 +121,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                         <ColorPicker
                             x:Name="AccentColorPicker"
+                            Color="{x:Bind ViewModel.AccentPickerColor, Mode=TwoWay}"
                             ColorChanged="OnAccentColorPickerColorChanged"
                             IsColorPreviewVisible="True"
                             IsColorChannelTextInputVisible="False"
@@ -464,15 +135,16 @@
                     </StackPanel>
                 </StackPanel>
             </Border>
-
-            <!-- 关闭行为 -->
+            <!-- 关闭行为（业务设置） -->
             <Border
+                x:Name="SecCloseAction"
                 Style="{StaticResource StatCardBorderStyle}">
                 <StackPanel Spacing="12">
                     <TextBlock Text="关闭窗口行为" Style="{ThemeResource SubtitleTextBlockStyle}" />
                     <ComboBox
                         Header="点击右上角 X 时"
-                        HorizontalAlignment="Stretch"
+                        MaxWidth="420"
+                        HorizontalAlignment="Left"
                         ItemsSource="{x:Bind ViewModel.CloseActionOptions, Mode=OneTime}"
                         SelectedIndex="{x:Bind ViewModel.CloseActionIndex, Mode=TwoWay}" />
                     <TextBlock
@@ -482,6 +154,421 @@
                         TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="AiSectionTemplate" x:DataType="vm:SettingsSection">
+            <StackPanel Spacing="16">
+            <!-- OCR 识别引擎配置（AI 与识别） -->
+            <Border
+                x:Name="SecOcrEngine"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="识别引擎 (OCR)" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <!-- 单选框无法直接双向绑定字符串，沿用 ThemeIndex 模式：索引在 VM 内与 OcrEngineMode 双向联动 -->
+                    <RadioButtons SelectedIndex="{x:Bind ViewModel.OcrEngineIndex, Mode=TwoWay}">
+                        <RadioButton AutomationProperties.Name="本地离线识别">
+                            <StackPanel Orientation="Vertical" Spacing="2">
+                                <TextBlock Text="本地离线识别 (Paddle/Ollama)" />
+                                <TextBlock
+                                    Text="免费、断网可用"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton AutomationProperties.Name="在线 AI 识别">
+                            <StackPanel Orientation="Vertical" Spacing="2">
+                                <TextBlock Text="在线 AI 识别" />
+                                <TextBlock
+                                    Text="需联网、准确率极高、按量计费"
+                                    Style="{ThemeResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            </StackPanel>
+                        </RadioButton>
+                    </RadioButtons>
+                </StackPanel>
+            </Border>
+            <!-- AI 大模型接入配置（AI 与识别） -->
+            <Border
+                x:Name="SecAi"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="AI 大模型接入" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="配置后，导入复杂单据时将优先调用 AI 识别。API Key 仅保存在本地。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <!-- 切换服务商时 VM 会自动带入该服务商的默认 Base URL 与模型名（Ollama / 自定义除外） -->
+                    <ComboBox
+                        Header="AI 服务商"
+                        MaxWidth="420"
+                        HorizontalAlignment="Left"
+                        ItemsSource="{x:Bind ViewModel.AiProviderOptions, Mode=OneTime}"
+                        SelectedItem="{x:Bind ViewModel.AiProvider, Mode=TwoWay}" />
+                    <!-- 仅选择 Ollama 时显示本机服务配置，其余服务商 Collapsed 保持界面整洁 -->
+                    <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.OllamaFieldsVisibility, Mode=OneWay}">
+                        <TextBox
+                            Header="Ollama 服务地址"
+                            MaxWidth="420" HorizontalAlignment="Left"
+                            Text="{x:Bind ViewModel.OllamaUrl, Mode=TwoWay}" />
+                        <!-- IsEditable 的 ComboBox 既可下拉选择预置模型，也可直接手动输入其它模型名 -->
+                        <ComboBox
+                            Header="Ollama 模型名称（下拉选择或手动输入）"
+                            MaxWidth="420"
+                            HorizontalAlignment="Left"
+                            IsEditable="True"
+                            ItemsSource="{x:Bind ViewModel.OllamaModelOptions, Mode=OneWay}"
+                            Text="{x:Bind ViewModel.OllamaModel, Mode=TwoWay}" />
+                    </StackPanel>
+                    <TextBox
+                        Header="API Base URL"
+                        MaxWidth="420" HorizontalAlignment="Left"
+                        Text="{x:Bind ViewModel.AiBaseUrl, Mode=TwoWay}" />
+                    <PasswordBox
+                        Header="API Key"
+                        MaxWidth="420" HorizontalAlignment="Left"
+                        Password="{x:Bind ViewModel.AiApiKey, Mode=TwoWay}" />
+                    <TextBlock
+                        Text="API Key 经 Windows 加密后保存在本地配置文件中，绝不会上传到任何服务器；配置拷贝到其他电脑时需重新填写 Key"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBox
+                        Header="模型名称"
+                        MaxWidth="420" HorizontalAlignment="Left"
+                        Text="{x:Bind ViewModel.AiModelName, Mode=TwoWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="测试连接" Command="{x:Bind ViewModel.TestAiConnectionCommand}" />
+                        <Button
+                            Content="保存配置"
+                            Command="{x:Bind ViewModel.SaveCommand}"
+                            Style="{ThemeResource AccentButtonStyle}" />
+                        <Button Content="取消" Command="{x:Bind ViewModel.CancelCommand}" />
+                    </StackPanel>
+                    <TextBlock
+                        Text="{x:Bind ViewModel.AiStatus, Mode=OneWay}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="BusinessSectionTemplate" x:DataType="vm:SettingsSection">
+            <StackPanel Spacing="16">
+            <!-- 库存预警 -->
+            <Border
+                x:Name="SecInventory"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="库存预警" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="库存数量低于该阈值时，会在工作台与库存预警页中提示。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <!-- NumberBox.Value 是 double，属性是 int，x:Bind 无法隐式转换，故用经典 Binding -->
+                    <NumberBox
+                        Header="低库存阈值（1 - 9999）"
+                        MinWidth="220" HorizontalAlignment="Left"
+                        Minimum="1"
+                        Maximum="9999"
+                        SpinButtonPlacementMode="Compact"
+                        Value="{Binding ViewModel.LowStockThreshold, Mode=TwoWay}" />
+                </StackPanel>
+            </Border>
+            <!-- 单据默认值 -->
+            <Border
+                x:Name="SecDocDefaults"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="单据默认值" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="新建单据时会自动带入这些值，减少重复录入。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <!-- 双列布局：Label 在上、输入框限宽，不再一个输入框拉满全屏 -->
+                    <Grid ColumnSpacing="16" RowSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBox
+                            Grid.Row="0" Grid.Column="0"
+                            MaxWidth="340" HorizontalAlignment="Left"
+                            Header="工程名称" Text="{x:Bind ViewModel.ProjectName, Mode=TwoWay}" />
+                        <TextBox
+                            Grid.Row="0" Grid.Column="1"
+                            MaxWidth="340" HorizontalAlignment="Left"
+                            Header="使用单位" Text="{x:Bind ViewModel.UsingUnit, Mode=TwoWay}" />
+                        <TextBox
+                            Grid.Row="1" Grid.Column="0"
+                            MaxWidth="340" HorizontalAlignment="Left"
+                            Header="默认计量单位" Text="{x:Bind ViewModel.DefaultUnit, Mode=TwoWay}" />
+                        <TextBox
+                            Grid.Row="1" Grid.Column="1"
+                            MaxWidth="340" HorizontalAlignment="Left"
+                            Header="默认经办人" Text="{x:Bind ViewModel.DefaultHandler, Mode=TwoWay}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <!-- 项目部与期数（业务设置） -->
+            <Border
+                x:Name="SecDeptPhase"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="项目部与期数" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="项目部（如信宜、梧州）与期数（如一期、二期）是通用业务维度：期数不与项目部绑定，任何记录可任选期数或留空，留空表示该记录没有期数（如梧州项目）。勾选适用栏目后会自动为对应数据表补上项目部/期数两列；取消勾选仅隐藏界面入口，历史数据保留。目前仅物资台账、渣土运输、自购物资完成了录入与筛选界面接入，其余栏目勾选后仅数据列就绪。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+
+                    <!-- 项目部管理：只读表格 + 弹窗编辑，替代旧的行内 TextBox/保存/删除按钮 -->
+                    <TextBlock Text="项目部管理" FontWeight="SemiBold" />
+                    <controls:DataGrid
+                        x:Name="DeptGrid"
+                        SelectedItem="{x:Bind ViewModel.SelectedDept, Mode=TwoWay}"
+                        ItemsSource="{x:Bind ViewModel.ProjectDepts, Mode=OneWay}"
+                        AutoGenerateColumns="False"
+                        IsReadOnly="True"
+                        SelectionMode="Single"
+                        CanUserSortColumns="False"
+                        HeadersVisibility="Column"
+                        MaxHeight="260"
+                        HorizontalAlignment="Left"
+                        MinWidth="360"
+                        DoubleTapped="OnDeptGridDoubleTapped">
+                        <controls:DataGrid.Columns>
+                            <controls:DataGridTextColumn
+                                Header="项目部名称"
+                                Binding="{Binding Name}"
+                                Width="*" />
+                        </controls:DataGrid.Columns>
+                    </controls:DataGrid>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="＋ 新增项目部"
+                            Click="OnAddDeptClick"
+                            Style="{ThemeResource AccentButtonStyle}" />
+                        <Button Content="编辑" Click="OnEditDeptClick" />
+                        <Button Content="删除" Click="OnDeleteDeptClick" />
+                    </StackPanel>
+
+                    <!-- 期数管理：不与项目部绑定，列表结构同项目部 -->
+                    <TextBlock Text="期数管理" FontWeight="SemiBold" />
+                    <TextBlock
+                        Text="期数由你自由维护，不与具体项目部绑定；录入时选择「无」表示该记录没有期数。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <controls:DataGrid
+                        x:Name="PhaseGrid"
+                        SelectedItem="{x:Bind ViewModel.SelectedPhase, Mode=TwoWay}"
+                        ItemsSource="{x:Bind ViewModel.ProjectPhases, Mode=OneWay}"
+                        AutoGenerateColumns="False"
+                        IsReadOnly="True"
+                        SelectionMode="Single"
+                        CanUserSortColumns="False"
+                        HeadersVisibility="Column"
+                        MaxHeight="260"
+                        HorizontalAlignment="Left"
+                        MinWidth="360"
+                        DoubleTapped="OnPhaseGridDoubleTapped">
+                        <controls:DataGrid.Columns>
+                            <controls:DataGridTextColumn
+                                Header="期数名称"
+                                Binding="{Binding Name}"
+                                Width="*" />
+                        </controls:DataGrid.Columns>
+                    </controls:DataGrid>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="＋ 新增期数"
+                            Click="OnAddPhaseClick"
+                            Style="{ThemeResource AccentButtonStyle}" />
+                        <Button Content="编辑" Click="OnEditPhaseClick" />
+                        <Button Content="删除" Click="OnDeletePhaseClick" />
+                    </StackPanel>
+
+                    <!-- 适用栏目：勾选即自动补列迁移，取消仅隐藏界面、保留数据 -->
+                    <TextBlock Text="适用栏目" FontWeight="SemiBold" />
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.DeptPhaseTables, Mode=OneWay}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:DeptPhaseApplicableTable">
+                                <CheckBox
+                                    Margin="0,2"
+                                    Click="OnDeptPhaseTableToggleClick"
+                                    Content="{x:Bind DisplayName}"
+                                    IsChecked="{x:Bind IsEnabled, Mode=TwoWay}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="DataSectionTemplate" x:DataType="vm:SettingsSection">
+            <StackPanel Spacing="16">
+            <!-- 数据库（数据与备份） -->
+            <Border
+                x:Name="SecDatabase"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="数据库" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="点击「选择数据库文件」选取要加载的 .db 文件；不选择则使用程序目录下默认文件，修改后重启程序生效。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBlock Text="当前使用的数据库文件" FontWeight="SemiBold" />
+                    <!-- 按方案隐藏绝对路径：不展示完整路径文本，悬停图标按钮可看路径提示，点击打开所在文件夹 -->
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="选择数据库文件…" Command="{x:Bind ViewModel.BrowseDatabaseFileCommand}" />
+                        <Button
+                            Content="恢复默认位置"
+                            Command="{x:Bind ViewModel.RestoreDefaultDatabaseCommand}"
+                            Visibility="{x:Bind ViewModel.RestoreDefaultDatabaseVisibility, Mode=OneWay}" />
+                        <Button Content="备份数据库" Command="{x:Bind ViewModel.BackupDatabaseCommand}" />
+                        <Button
+                            Command="{x:Bind ViewModel.OpenDatabaseFolderCommand}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="6"
+                            ToolTipService.ToolTip="打开数据库所在文件夹">
+                            <FontIcon Glyph="&#xE838;" FontSize="14" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <!-- 配置文件（数据与备份） -->
+            <Border
+                x:Name="SecConfig"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="配置文件" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="点击「选择配置文件」选取要加载的 settings.json；不选择则使用程序目录下默认文件，修改后重启程序生效。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBlock Text="当前使用的配置文件" FontWeight="SemiBold" />
+                    <!-- 按方案隐藏绝对路径：不展示完整路径文本，悬停图标按钮可看路径提示，点击打开所在文件夹 -->
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="选择配置文件…" Command="{x:Bind ViewModel.BrowseSettingsFileCommand}" />
+                        <Button
+                            Content="恢复默认位置"
+                            Command="{x:Bind ViewModel.RestoreDefaultSettingsFileCommand}"
+                            Visibility="{x:Bind ViewModel.RestoreDefaultSettingsVisibility, Mode=OneWay}" />
+                        <Button
+                            Click="OnOpenSettingsFolderClick"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="6"
+                            ToolTipService.ToolTip="打开配置文件所在文件夹">
+                            <FontIcon Glyph="&#xE838;" FontSize="14" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <!-- 数据库备份（数据与备份） -->
+            <Border
+                x:Name="SecBackup"
+                Style="{StaticResource StatCardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="数据库备份" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock
+                        Text="数据库默认保存在程序所在目录的 Data 文件夹内，数据随软件走；也可在下方手动指定其他位置。旧版本安装程序指定过数据目录的，将继续沿用该目录。每次数据库版本升级前会自动备份到本机应用数据目录（%LOCALAPPDATA%\MaterialSystem\Backup）——备份放在程序目录之外，程序目录被覆盖或误删时依然完好；超出保留份数的最旧备份自动清理。卸载软件时若程序目录中仍有 Data 文件夹，卸载程序会自动把它移至 %LOCALAPPDATA%\MaterialSystem 下保存。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="手动备份" Click="OnManualBackupClick" />
+                        <Button
+                            Content="从备份恢复"
+                            Click="OnRestoreBackupClick" />
+                        <!-- NumberBox.Value 为 double、配置字段为 int，沿用页面底部的经典 Binding 约定 -->
+                        <NumberBox
+                            Header="备份保留份数"
+                            Width="180"
+                            Margin="16,0,0,0"
+                            Minimum="1"
+                            Maximum="99"
+                            SpinButtonPlacementMode="Compact"
+                            Value="{Binding ViewModel.BackupRetentionCount, Mode=TwoWay}" />
+                    </StackPanel>
+                    <TextBlock
+                        Text="备份保留份数修改后需点击「AI 大模型接入」卡片中的「保存配置」或页面底部「保存」按钮才会生效。"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.BackupStatus, Mode=OneWay}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            </StackPanel>
+        </DataTemplate>
+        <local:SettingsSectionTemplateSelector
+            x:Key="SettingsSectionSelector"
+            General="{StaticResource GeneralSectionTemplate}"
+            Ai="{StaticResource AiSectionTemplate}"
+            Business="{StaticResource BusinessSectionTemplate}"
+            Data="{StaticResource DataSectionTemplate}" />
+    </Page.Resources>
+    <Grid Padding="24" ColumnSpacing="20">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="196" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧分类导航 -->
+        <StackPanel Grid.Column="0" Spacing="12">
+            <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
+            <ListBox
+                x:Name="NavList"
+                ItemsSource="{x:Bind ViewModel.Sections, Mode=OneTime}"
+                SelectedItem="{x:Bind ViewModel.SelectedSection, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SettingsSection">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="{Binding Icon}" FontSize="16" />
+                            <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </StackPanel>
+
+        <!-- 右侧内容区：按分类显示对应设置卡片 -->
+        <ScrollViewer Grid.Column="1">
+            <StackPanel Padding="0,0,4,0" Spacing="16" MaxWidth="760" HorizontalAlignment="Left">
+                <TextBlock
+                    Text="{x:Bind ViewModel.SelectedSection.Title, Mode=OneWay}"
+                    Style="{ThemeResource SubtitleTextBlockStyle}"
+                    Margin="0,0,0,4" />
+                <ContentControl
+                    Content="{x:Bind ViewModel.SelectedSection, Mode=OneWay}"
+                    ContentTemplateSelector="{StaticResource SettingsSectionSelector}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch" />
+
+
+
+
+
+
+
+
+
+
 
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button
@@ -496,5 +583,6 @@
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 TextWrapping="Wrap" />
         </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>

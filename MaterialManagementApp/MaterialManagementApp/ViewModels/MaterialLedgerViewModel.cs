@@ -44,6 +44,66 @@ public partial class MaterialLedgerViewModel : ObservableObject
     /// <summary>台账记录集合，绑定到 DataGrid。加载后按进场日期倒序排列。</summary>
     public ObservableCollection<MaterialLedger> Ledgers { get; } = new();
 
+    /// <summary>勾选列状态集合：勾选行的 Id 集合，供批量修改使用。</summary>
+    public HashSet<int> CheckedIds { get; } = new();
+
+    /// <summary>是否存在勾选行：控制「批量修改 / 删除选中」按钮显隐。</summary>
+    [ObservableProperty]
+    private bool _hasCheckedRows;
+
+    /// <summary>勾选行数量变化事件：页面据此显示/隐藏「批量修改」按钮。</summary>
+    public event EventHandler? CheckedCountChanged;
+
+    /// <summary>行勾选变化时由页面调用：维护勾选 Id 集合并刷新批量按钮可见性。</summary>
+    /// <param name="row">勾选状态刚发生变化的行。</param>
+    public void SyncCheckedRow(MaterialLedger row)
+    {
+        if (row.Id != 0)
+        {
+            if (row.IsChecked)
+            {
+                CheckedIds.Add(row.Id);
+            }
+            else
+            {
+                CheckedIds.Remove(row.Id);
+            }
+        }
+
+        HasCheckedRows = CheckedIds.Count > 0;
+        CheckedCountChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 最近一次软删除的记录主键集合（按删除顺序）。
+    /// 「撤销删除」据此把记录恢复回库；新删除会覆盖旧记录（只支持撤销最近一次）。
+    /// </summary>
+    private readonly List<int> _lastDeletedIds = new();
+
+    /// <summary>删除完成事件：参数为本次软删除的记录主键。页面订阅后显示「已删除 [撤销]」Toast。</summary>
+    public event EventHandler<IReadOnlyList<int>>? Deleted;
+
+    /// <summary>
+    /// 撤销最近一次删除：把软删除的记录恢复为正常状态并刷新列表。
+    /// </summary>
+    public void UndoLastDelete()
+    {
+        if (_lastDeletedIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var id in _lastDeletedIds)
+        {
+            DatabaseService.Instance.RestoreMaterialLedger(id);
+        }
+
+        _logger.LogInformation("撤销删除台账 {Count} 条：{Ids}", _lastDeletedIds.Count, string.Join(",", _lastDeletedIds));
+        _lastDeletedIds.Clear();
+        Load();
+        StatusMessage = "已撤销删除。";
+    }
+
     /// <summary>物资名称下拉选项，首项固定为「全部」，其余为库中已存在的物资名称。</summary>
     public ObservableCollection<string> MaterialNameOptions { get; } = new() { AllMaterialNames };
 
@@ -169,6 +229,10 @@ public partial class MaterialLedgerViewModel : ObservableObject
 
             RefreshMaterialNameOptions();
             RecalculateTotals();
+
+            // 新页数据替换旧页：清空勾选状态与批量按钮，避免引用已移出集合的行
+            CheckedIds.Clear();
+            HasCheckedRows = false;
 
             StatusMessage = IsFilterActive
                 ? $"已加载 {Ledgers.Count} 条台账（筛选已启用）。"
@@ -542,17 +606,103 @@ public partial class MaterialLedgerViewModel : ObservableObject
             if (row.Id != 0)
             {
                 DatabaseService.Instance.DeleteMaterialLedger(row.Id);
+                // 记录本次删除的主键，供「撤销」恢复；新一轮删除覆盖上一轮
+                _lastDeletedIds.Clear();
+                _lastDeletedIds.Add(row.Id);
+                Deleted?.Invoke(this, _lastDeletedIds);
             }
 
             RecalculateTotals();
-            StatusMessage = "已删除。";
-            _logger.LogInformation("删除物料台账成功，Id={Id}。", row.Id);
+            StatusMessage = row.Id != 0 ? "已删除，可点击右下角提示撤销。" : "已移除未保存行。";
+            _logger.LogInformation("软删除物料台账成功，Id={Id}。", row.Id);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "删除物料台账失败，Id={Id}。", row.Id);
             StatusMessage = $"删除失败：{ex.Message}";
         }
+    }
+
+    /// <summary>批量软删除勾选行：统一打删除标记，支持一次撤销全部。</summary>
+    /// <returns>实际删除的已入库行数。</returns>
+    public int DeleteCheckedRows()
+    {
+        var targets = Ledgers.Where(r => r.IsChecked && r.Id != 0).ToList();
+        if (targets.Count == 0)
+        {
+            return 0;
+        }
+
+        try
+        {
+            foreach (var row in targets)
+            {
+                DetachTotalsTracking(row);
+                Ledgers.Remove(row);
+            }
+
+            var ids = targets.Select(r => r.Id).ToList();
+            DatabaseService.Instance.DeleteMaterialLedgers(ids);
+
+            _lastDeletedIds.Clear();
+            _lastDeletedIds.AddRange(ids);
+            Deleted?.Invoke(this, ids);
+
+            RecalculateTotals();
+            StatusMessage = $"已删除 {ids.Count} 条，可点击右下角提示撤销。";
+            _logger.LogInformation("批量软删除物料台账 {Count} 条：{Ids}", ids.Count, string.Join(",", ids));
+            return ids.Count;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "批量删除物料台账失败。");
+            StatusMessage = $"删除失败：{ex.Message}";
+            Load();
+            return 0;
+        }
+    }
+
+    /// <summary>按选中的字段批量修改勾选行：写库后刷新列表视图。</summary>
+    /// <param name="field">目标字段：ProjectDept=项目部、ProjectPhase=期数、Handler=经办人。</param>
+    /// <param name="value">写入的新值；空串表示清空该字段。</param>
+    /// <returns>更新的行数。</returns>
+    public int UpdateChecked(string field, string value)
+    {
+        var ids = CheckedIds.Where(id => id != 0).ToList();
+        if (ids.Count == 0)
+        {
+            return 0;
+        }
+
+        var affected = DatabaseService.Instance.UpdateMaterialLedgerBatch(ids, field, value);
+        _logger.LogInformation("批量修改台账 {Field}={Value}，影响 {Count} 行。", field, value, affected);
+
+        // 同步更新内存行属性后整体重载，保证排序/筛选/合计同步刷新
+        foreach (var row in Ledgers.Where(r => ids.Contains(r.Id)))
+        {
+            switch (field)
+            {
+                case "ProjectDept": row.ProjectDept = value; break;
+                case "ProjectPhase": row.ProjectPhase = value; break;
+                case "Handler": row.Handler = value; break;
+            }
+        }
+
+        ClearChecked();
+        Load();
+        return affected;
+    }
+
+    /// <summary>清空勾选状态并通知页面隐藏「批量修改」按钮。</summary>
+    public void ClearChecked()
+    {
+        CheckedIds.Clear();
+        foreach (var row in Ledgers)
+        {
+            row.IsChecked = false;
+        }
+
+        CheckedCountChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

@@ -225,7 +225,7 @@ public sealed partial class MainWindow : Window
                 ? "（未初始化）"
                 : Path.GetFileName(databasePath);
 
-            var ledgerCount = DatabaseService.Instance.ExecuteScalarCount("SELECT COUNT(*) FROM MaterialLedger;");
+            var ledgerCount = DatabaseService.Instance.ExecuteScalarCount("SELECT COUNT(*) FROM MaterialLedger WHERE IsDeleted = 0;");
             var logCount = DatabaseService.Instance.ExecuteScalarCount("SELECT COUNT(*) FROM WorkLog;");
 
             StatusText.Text = $"数据库：{fileName}　|　台账 {ledgerCount} 条　|　工作日志 {logCount} 条";

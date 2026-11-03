@@ -10,6 +10,7 @@ using MaterialManagementApp.Models;
 using MaterialManagementApp.Services.Export;
 using MaterialManagementApp.Services;
 using MaterialManagementApp.ViewModels;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
@@ -52,6 +53,9 @@ public sealed partial class MaterialLedgerPage : Page
 
         // 保存失败（校验不通过 / 数据库异常）时弹出模态警告弹窗，表单内容保留
         ViewModel.SaveFailed += OnViewModelSaveFailed;
+
+        // 删除成功后右下角弹「已删除 [撤销]」Toast（软删除可撤销）
+        ViewModel.Deleted += OnViewModelDeleted;
 
         // 翻页 / 查询 / 刷新 / 重置前存在草稿行时，由页面弹出「离开将丢弃」确认弹窗
         ViewModel.ConfirmDiscardDraftsAsync = ConfirmDiscardDraftsAsync;
@@ -255,7 +259,7 @@ public sealed partial class MaterialLedgerPage : Page
             // WinUI 3 的对话框必须指定 XamlRoot，否则 ShowAsync 会抛异常
             XamlRoot = XamlRoot,
             Title = "确认删除",
-            Content = $"确定删除物资「{row.MaterialName}」（{row.EntryDate}）的台账记录吗？该操作不可撤销。",
+            Content = $"确定删除物资「{row.MaterialName}」（{row.EntryDate}）的台账记录吗？删除后可在右下角提示中撤销。",
             PrimaryButtonText = "删除",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close
@@ -264,6 +268,291 @@ public sealed partial class MaterialLedgerPage : Page
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
             ViewModel.DeleteRow(row);
+        }
+    }
+
+    /// <summary>勾选列点击：把行的勾选状态同步给视图模型（勾选 Id 集合 + 批量按钮显隐）。</summary>
+    /// <param name="sender">被点击的复选框（DataContext 为该行）。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnRowCheckClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MaterialLedger row })
+        {
+            ViewModel.SyncCheckedRow(row);
+        }
+    }
+
+    /// <summary>「批量修改」弹窗：选择目标字段（项目部/期数/经办人），填入统一的新值后一键改写所有勾选行。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private async void OnBatchUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.CheckedIds.Count == 0)
+        {
+            ViewModel.StatusMessage = "请先勾选要修改的行。";
+            return;
+        }
+
+        var fieldBox = new ComboBox
+        {
+            Header = "修改字段",
+            MinWidth = 280,
+            ItemsSource = new List<string> { "项目部", "期数", "经办人" },
+            SelectedIndex = 0
+        };
+        var deptBox = new MaterialManagementApp.Controls.DeptPicker { MinWidth = 280 };
+        var phaseBox = new MaterialManagementApp.Controls.PhasePicker { MinWidth = 280, Visibility = Visibility.Collapsed };
+        var valueText = new TextBox
+        {
+            Header = "新值（留空表示清空该字段）",
+            MaxLength = 50,
+            Visibility = Visibility.Collapsed
+        };
+
+        // 项目部/期数用系统中维护的维度选择器，避免手输错别字；经办人自由输入
+        fieldBox.SelectionChanged += (_, _) =>
+        {
+            deptBox.Visibility = fieldBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+            phaseBox.Visibility = fieldBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+            valueText.Visibility = fieldBox.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+        };
+
+        var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(fieldBox);
+        panel.Children.Add(deptBox);
+        panel.Children.Add(phaseBox);
+        panel.Children.Add(valueText);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"批量修改 {ViewModel.CheckedIds.Count} 条记录",
+            Content = panel,
+            PrimaryButtonText = "应用",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var (field, value) = fieldBox.SelectedIndex switch
+        {
+            0 => ("ProjectDept", deptBox.Value ?? string.Empty),
+            1 => ("ProjectPhase", phaseBox.Value ?? string.Empty),
+            _ => ("Handler", valueText.Text?.Trim() ?? string.Empty)
+        };
+
+        var affected = ViewModel.UpdateChecked(field, value);
+        ViewModel.StatusMessage = $"批量修改完成，更新 {affected} 条记录。";
+    }
+
+    /// <summary>「删除选中」：二次确认后批量软删除勾选行，删除后弹撤销 Toast。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private async void OnDeleteCheckedClick(object sender, RoutedEventArgs e)
+    {
+        var count = ViewModel.CheckedIds.Count;
+        if (count == 0)
+        {
+            ViewModel.StatusMessage = "请先勾选要删除的行。";
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "确认删除",
+            Content = $"确定删除勾选的 {count} 条台账记录吗？删除后可在右下角提示中一次性撤销。",
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            ViewModel.DeleteCheckedRows();
+        }
+    }
+
+    /// <summary>Toast「撤销」按钮：恢复最近一次删除并关闭提示。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnUndoClick(object sender, RoutedEventArgs e)
+    {
+        UndoToast.IsOpen = false;
+        ViewModel.UndoLastDelete();
+    }
+
+    /// <summary>Toast 关闭（手动关/自动超时）：停掉计时器。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">事件参数。</param>
+    private void OnUndoToastClosed(InfoBar sender, object e)
+    {
+        _undoToastTimer?.Stop();
+    }
+
+    /// <summary>收到删除事件：右下角弹「已删除 N 条记录 [撤销]」，8 秒无操作自动消失。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="ids">本次删除的记录主键。</param>
+    private void OnViewModelDeleted(object? sender, IReadOnlyList<int> ids)
+    {
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            UndoToast.Message = $"已删除 {ids.Count} 条记录";
+            UndoToast.IsOpen = true;
+            _undoToastTimer ??= CreateUndoToastTimer();
+            _undoToastTimer.Stop();
+            _undoToastTimer.Start();
+        });
+    }
+
+    /// <summary>创建撤销 Toast 的 8 秒自动关闭计时器（创建一次重复使用）。</summary>
+    /// <returns>定时器实例。</returns>
+    private DispatcherQueueTimer CreateUndoToastTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(8);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) => UndoToast.IsOpen = false;
+        return timer;
+    }
+
+    /// <summary>右键表格弹出「显示/隐藏列」菜单：按当前列状态动态重建菜单项。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">事件参数。</param>
+    private void OnColumnMenuOpening(object? sender, object e)
+    {
+        if (sender is not MenuFlyout menu)
+        {
+            return;
+        }
+
+        menu.Items.Clear();
+
+        // 菜单标题：禁用态提示项，不可点击
+        var title = new MenuFlyoutItem
+        {
+            Text = "显示 / 隐藏列（点击切换）",
+            IsEnabled = false
+        };
+        menu.Items.Add(title);
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        foreach (var column in LedgerGrid.Columns)
+        {
+            // 勾选列无表头文字，不在配置菜单中出现
+            if (string.IsNullOrEmpty(column.Header as string))
+            {
+                continue;
+            }
+
+            var item = new ToggleMenuFlyoutItem
+            {
+                Text = column.Header.ToString(),
+                IsChecked = column.Visibility == Visibility.Visible
+            };
+            var captured = column;
+            item.Click += (_, _) =>
+            {
+                // 至少保留一列可见，避免整表被藏起来后看起来像空白故障
+                if (!item.IsChecked && LedgerGrid.Columns.Count(
+                        c => c.Visibility == Visibility.Visible && !string.IsNullOrEmpty(c.Header as string)) <= 1)
+                {
+                    item.IsChecked = true;
+                    ViewModel.StatusMessage = "至少需要保留一列。";
+                    return;
+                }
+
+                captured.Visibility = item.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+            };
+            menu.Items.Add(item);
+        }
+    }
+
+    /// <summary>撤销 Toast 的自动关闭计时器（首次弹 Toast 时懒创建，重复使用）。</summary>
+    private DispatcherQueueTimer? _undoToastTimer;
+
+    /// <summary>商品名称联想防抖句柄：每次输入重置，300ms 后查询历史名称。</summary>
+    private System.Threading.CancellationTokenSource? _materialSuggestCts;
+
+    /// <summary>经办人联想防抖句柄：每次输入重置，300ms 后查询历史姓名。</summary>
+    private System.Threading.CancellationTokenSource? _handlerSuggestCts;
+
+    /// <summary>商品名称单元格输入变化：300ms 防抖后按前缀查历史名称给下拉联想。</summary>
+    /// <param name="sender">正在编辑的 AutoSuggestBox。</param>
+    /// <param name="args">文本变化参数。</param>
+    private void OnMaterialNameSuggestText(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput)
+        {
+            return;
+        }
+
+        RunDebouncedSuggest(sender, sender.Text,
+            prefix => DatabaseService.Instance.GetMaterialNameSuggestions(prefix),
+            () => _materialSuggestCts,
+            value => _materialSuggestCts = value);
+    }
+
+    /// <summary>经办人单元格输入变化：300ms 防抖后按前缀查历史姓名给下拉联想。</summary>
+    /// <param name="sender">正在编辑的 AutoSuggestBox。</param>
+    /// <param name="args">文本变化参数。</param>
+    private void OnHandlerSuggestText(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput)
+        {
+            return;
+        }
+
+        RunDebouncedSuggest(sender, sender.Text,
+            prefix => DatabaseService.Instance.GetHandlerSuggestions(prefix),
+            () => _handlerSuggestCts,
+            value => _handlerSuggestCts = value);
+    }
+
+    /// <summary>联想查询的统一防抖入口：取消上一次未完成的查询，300ms 后在后台线程查库再回 UI 线程。</summary>
+    /// <param name="box">展示候选的 AutoSuggestBox。</param>
+    /// <param name="text">当前输入文本。</param>
+    /// <param name="query">查询委托：前缀 → 候选列表（在后台线程执行）。</param>
+    /// <param name="getCurrent">读取该输入框当前防抖令牌。</param>
+    /// <param name="setCurrent">写入新的防抖令牌。</param>
+    private static async void RunDebouncedSuggest(
+        AutoSuggestBox box,
+        string text,
+        Func<string, List<string>> query,
+        Func<System.Threading.CancellationTokenSource?> getCurrent,
+        Action<System.Threading.CancellationTokenSource?> setCurrent)
+    {
+        getCurrent()?.Cancel();
+        var cts = new System.Threading.CancellationTokenSource();
+        setCurrent(cts);
+        var token = cts.Token;
+
+        try
+        {
+            await System.Threading.Tasks.Task.Delay(300, token);
+            var dispatcher = box.DispatcherQueue;
+            var suggestions = await System.Threading.Tasks.Task.Run(() => query(text?.Trim() ?? string.Empty), token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            dispatcher.TryEnqueue(() =>
+            {
+                // 编辑已结束或控件已换绑时不再回填
+                if (!token.IsCancellationRequested)
+                {
+                    box.ItemsSource = suggestions;
+                }
+            });
+        }
+        catch (System.Threading.Tasks.TaskCanceledException)
+        {
+            // 防抖被新输入打断，属于正常路径，无需处理
         }
     }
 
@@ -335,11 +624,41 @@ public sealed partial class MaterialLedgerPage : Page
             _batchOcrWindow.Closed += (_, _) =>
             {
                 _batchOcrWindow = null;
+                // 退订静态进度事件并收起悬浮进度卡片，避免持有已销毁窗口的引用
+                OcrBatchImportWindow.BatchProgressChanged -= OnBatchProgressChanged;
+                _ = DispatcherQueue.TryEnqueue(() => ScanProgressCard.IsOpen = false);
                 ViewModel.Load();
             };
+
+            // 订阅识别进度：台账页右下角悬浮卡片实时显示「正在解析第 N/M 张」
+            OcrBatchImportWindow.BatchProgressChanged += OnBatchProgressChanged;
         }
 
         _batchOcrWindow.Activate();
+    }
+
+    /// <summary>批量识别进度回调：刷新悬浮进度卡片文案；完成后提示可进入批量核对。</summary>
+    /// <param name="sender">事件源（批量扫描窗口）。</param>
+    /// <param name="e">进度快照（第 N 张 / 共 M 张 / 是否完成）。</param>
+    private void OnBatchProgressChanged(object? sender, OcrBatchImportWindow.OcrBatchProgress e)
+    {
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            ScanProgressCard.Message = e.Finished
+                ? $"批量识别完成（共 {e.Total} 张），点击「打开批量核对」核对并保存。"
+                : $"正在解析第 {e.Current}/{e.Total} 张图片...";
+            ScanProgressCard.Severity = e.Finished ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
+            ScanProgressCard.IsOpen = true;
+        });
+    }
+
+    /// <summary>进度卡片「打开批量核对」：把批量扫描窗口激活置前，直接进入核对界面。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnOpenBatchReviewClick(object sender, RoutedEventArgs e)
+    {
+        ScanProgressCard.IsOpen = false;
+        _batchOcrWindow?.Activate();
     }
 
     /// <summary>「地材单图片」列的「查看」按钮：用系统默认看图工具打开该记录关联的扫描图片。</summary>

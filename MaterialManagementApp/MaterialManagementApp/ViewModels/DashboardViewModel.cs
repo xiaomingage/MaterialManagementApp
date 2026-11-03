@@ -52,7 +52,7 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             EarthMaterialCount = (int)DatabaseService.Instance.ExecuteScalarCount(
-                "SELECT COUNT(*) FROM MaterialLedger;");
+                "SELECT COUNT(*) FROM MaterialLedger WHERE IsDeleted = 0;");
 
             // Excel 待同步需要「已导出/未同步」状态字段支撑，当前无对应表结构，先固定为 0
             ExcelPendingCount = 0;

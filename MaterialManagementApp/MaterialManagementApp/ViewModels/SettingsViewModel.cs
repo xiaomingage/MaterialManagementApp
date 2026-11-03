@@ -25,10 +25,57 @@ namespace MaterialManagementApp.ViewModels;
 /// 设置页面视图模型。负责读取、编辑、保存与重置应用配置，
 /// 并提供数据库备份与打开所在目录两项运维操作。
 /// </summary>
+/// <summary>
+/// 设置页二级导航分类项：左侧 ListBox 的数据源。
+/// Key 用于在 XAML 的 DataTemplateSelector 中定位右侧内容模板，不落库。
+/// </summary>
+public sealed class SettingsSection
+{
+    /// <summary>创建分类项。</summary>
+    /// <param name="key">分类键：general / ai / business / data。</param>
+    /// <param name="title">导航显示标题。</param>
+    /// <param name="icon">Segoe MDL2 Assets 图标字形。</param>
+    public SettingsSection(string key, string title, string icon)
+    {
+        Key = key;
+        Title = title;
+        Icon = icon;
+    }
+
+    /// <summary>分类键：general / ai / business / data。</summary>
+    public string Key { get; }
+
+    /// <summary>导航显示标题。</summary>
+    public string Title { get; }
+
+    /// <summary>Segoe MDL2 Assets 图标字形。</summary>
+    public string Icon { get; }
+
+    /// <summary>
+    /// 共享设置视图模型引用：分类 DataTemplate（x:DataType=SettingsSection）内的
+    /// x:Bind ViewModel.* 以本属性为绑定根，与页面级绑定写法完全一致。
+    /// 由 SettingsViewModel 构造函数统一赋值。
+    /// </summary>
+    public SettingsViewModel ViewModel { get; set; } = null!;
+}
+
 public partial class SettingsViewModel : ObservableObject
 {
     /// <summary>分类日志实例，输出到 IDE 输出窗口（Debug Provider）。</summary>
     private readonly ILogger _logger = AppLog.CreateLogger<SettingsViewModel>();
+
+    /// <summary>左侧二级导航的分类列表（顺序即显示顺序）。</summary>
+    public IReadOnlyList<SettingsSection> Sections { get; } = new[]
+    {
+        new SettingsSection("general", "通用与外观", "\uE790"),
+        new SettingsSection("ai", "AI 与识别", "\uE8FE"),
+        new SettingsSection("business", "业务与参数", "\uE912"),
+        new SettingsSection("data", "数据与备份", "\uE8B7"),
+    };
+
+    /// <summary>当前选中的分类：右侧内容区据此经 DataTemplateSelector 切换模板。</summary>
+    [ObservableProperty]
+    private SettingsSection _selectedSection = null!;
 
     /// <summary>主题下拉框索引与配置值的对应关系，顺序必须与 XAML 中 ComboBoxItem 一致。</summary>
     private static readonly string[] _themeKeys = { "Light", "Dark", "Acrylic", "System" };
@@ -85,6 +132,15 @@ public partial class SettingsViewModel : ObservableObject
     /// </summary>
     public SettingsViewModel()
     {
+        // 二级导航分类：Key 与页面 XAML 里的 DataTemplate 一一对应（见 SettingsSectionTemplateSelector）
+        SelectedSection = Sections[0];
+
+        // 每个分类项持有共享 VM 引用：分类 DataTemplate 内的 x:Bind ViewModel.*
+        // 以 SettingsSection.ViewModel 为绑定根，切换分类无需重建页面
+        foreach (var section in Sections)
+        {
+            section.ViewModel = this;
+        }
         LowStockThreshold = 10;
         ProjectName = string.Empty;
         UsingUnit = string.Empty;
@@ -785,11 +841,49 @@ public partial class SettingsViewModel : ObservableObject
         ApplyTheme(_themeKeys[Math.Clamp(value, 0, _themeKeys.Length - 1)]);
     }
 
-    /// <summary>强调色变化时即时应用到全局控件。</summary>
+    /// <summary>强调色变化时即时应用到全局控件，并同步取色器绑定属性。</summary>
     partial void OnAccentColorChanged(string value)
     {
         ThemeHelper.ApplyAccentColor(value);
+        OnPropertyChanged(nameof(AccentPickerColor));
     }
+
+    /// <summary>
+    /// 取色器当前颜色：与 <see cref="AccentColor"/>（#RRGGBB）互转，供 ColorPicker 双向绑定。
+    /// 模板内控件不再生成页面字段，改走 MVVM 绑定。
+    /// </summary>
+    public Windows.UI.Color AccentPickerColor
+    {
+        get
+        {
+            var hex = AccentColor?.TrimStart('#') ?? string.Empty;
+            if (hex.Length == 6
+                && byte.TryParse(hex[..2], System.Globalization.NumberStyles.HexNumber, null, out var r)
+                && byte.TryParse(hex.Substring(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)
+                && byte.TryParse(hex.Substring(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b))
+            {
+                return Windows.UI.Color.FromArgb(0xFF, r, g, b);
+            }
+
+            return Microsoft.UI.Colors.Orange;
+        }
+        set
+        {
+            var hex = $"#{value.R:X2}{value.G:X2}{value.B:X2}";
+            if (!string.Equals(hex, AccentColor, System.StringComparison.OrdinalIgnoreCase))
+            {
+                AccentColor = hex;
+            }
+        }
+    }
+
+    /// <summary>项目部表格当前选中行：批量编辑/删除据此操作，替代模板内控件字段引用。</summary>
+    [ObservableProperty]
+    private ProjectDept? _selectedDept;
+
+    /// <summary>期数表格当前选中行：批量编辑/删除据此操作，替代模板内控件字段引用。</summary>
+    [ObservableProperty]
+    private ProjectPhase? _selectedPhase;
 
     /// <summary>OCR 引擎单选框切换：把选中索引翻译为 OcrEngineMode 存储值。</summary>
     partial void OnOcrEngineIndexChanged(int value)

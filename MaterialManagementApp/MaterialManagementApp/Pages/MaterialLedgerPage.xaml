@@ -98,6 +98,16 @@
                 <Button Content="按模板导出" Click="OnExportTemplateClick" />
                 <Button Content="导入单据 / OCR 识别" Click="OnOcrImportClick" />
                 <Button Content="批量扫描识别" Click="OnBatchOcrImportClick" />
+                <!-- 勾选行后出现：批量修改项目部/期数/经办人，或批量删除（均可撤销） -->
+                <Button
+                    Content="批量修改"
+                    Click="OnBatchUpdateClick"
+                    Style="{ThemeResource AccentButtonStyle}"
+                    Visibility="{x:Bind ViewModel.HasCheckedRows, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                <Button
+                    Content="删除选中"
+                    Click="OnDeleteCheckedClick"
+                    Visibility="{x:Bind ViewModel.HasCheckedRows, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
             </StackPanel>
             <!-- 状态提示条：有消息才显示，浅灰容器与卡片语言一致 -->
             <Border
@@ -130,7 +140,25 @@
             RowEditEnded="OnLedgerRowEditEnded"
             LoadingRow="OnLedgerLoadingRow"
             ItemsSource="{x:Bind ViewModel.Ledgers, Mode=OneWay}">
+            <!-- 右键表格弹出「显示/隐藏列」配置菜单（动态生成，见 code-behind）；
+                 列宽拖动由 DataGrid 默认 CanUserResizeColumns 支持 -->
+            <controls:DataGrid.ContextFlyout>
+                <MenuFlyout Opening="OnColumnMenuOpening" Placement="Bottom" />
+            </controls:DataGrid.ContextFlyout>
             <controls:DataGrid.Columns>
+                <!-- 最左侧勾选列：勾选多行后顶部出现「批量修改 / 删除选中」 -->
+                <controls:DataGridTemplateColumn CanUserResize="False" CanUserReorder="False">
+                    <controls:DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox
+                                MinWidth="0"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                Click="OnRowCheckClick" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellTemplate>
+                </controls:DataGridTemplateColumn>
                 <!-- 列顺序与名称严格对齐「地材台账模版」的 12 列表头（序号不入表格，由导出时生成） -->
                 <controls:DataGridTextColumn
                     Binding="{Binding EntryDate, Mode=TwoWay}"
@@ -139,12 +167,24 @@
                     Binding="{Binding DocNo, Mode=TwoWay}"
                     Header="编号" />
                 <!-- 商品名称是行内保存的唯一硬校验字段，列头星号标识必填。
-                     注意：Toolkit DataGrid 列头是 ContentControl，只支持纯文本或
-                     ContentTemplate，直接放 StackPanel 等 UIElement 会抛
-                     NotSupportedException（应用启动即闪退），必须用文本列头 -->
-                <controls:DataGridTextColumn
-                    Binding="{Binding MaterialName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                    Header="商品名称 *" />
+                     编辑时使用 AutoSuggestBox：防抖查询历史名称给出联想下拉（见 code-behind）。
+                     注意：Toolkit DataGrid 列头是 ContentControl，只支持纯文本，
+                     直接放 UIElement 会抛 NotSupportedException（启动即闪退） -->
+                <controls:DataGridTemplateColumn Header="商品名称 *">
+                    <controls:DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding MaterialName}" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellTemplate>
+                    <controls:DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <AutoSuggestBox
+                                Text="{Binding MaterialName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TextChanged="OnMaterialNameSuggestText"
+                                QueryIcon="Find" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellEditingTemplate>
+                </controls:DataGridTemplateColumn>
                 <controls:DataGridTextColumn
                     Binding="{Binding Specification, Mode=TwoWay}"
                     Header="商品规格" />
@@ -161,9 +201,21 @@
                     Binding="{Binding Amount, Mode=OneWay}"
                     Header="金额"
                     IsReadOnly="True" />
-                <controls:DataGridTextColumn
-                    Binding="{Binding Handler, Mode=TwoWay}"
-                    Header="经办人" />
+                <!-- 经办人：编辑时同样走历史姓名联想 -->
+                <controls:DataGridTemplateColumn Header="经办人">
+                    <controls:DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Handler}" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellTemplate>
+                    <controls:DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <AutoSuggestBox
+                                Text="{Binding Handler, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TextChanged="OnHandlerSuggestText" />
+                        </DataTemplate>
+                    </controls:DataGridTemplateColumn.CellEditingTemplate>
+                </controls:DataGridTemplateColumn>
                 <controls:DataGridTextColumn
                     Binding="{Binding ProjectAddress, Mode=TwoWay}"
                     Header="收货位置" />
@@ -248,6 +300,40 @@
                 HorizontalAlignment="Center"
                 TextWrapping="Wrap" />
         </StackPanel>
+
+        <!-- 删除撤销 Toast：悬浮表格右下角，含「撤销」按钮；显示后 8 秒自动消失 -->
+        <InfoBar
+            x:Name="UndoToast"
+            IsOpen="False"
+            Severity="Informational"
+            IsClosable="True"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,16,16"
+            CornerRadius="8"
+            Closed="OnUndoToastClosed">
+            <InfoBar.ActionButton>
+                <Button Content="撤销" Click="OnUndoClick" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <!-- 批量扫描识别进度卡片：识别在扫描窗口后台进行，这里悬浮展示第 N/M 张；
+             识别完成后点击「打开批量核对」直接进入核对界面 -->
+        <InfoBar
+            x:Name="ScanProgressCard"
+            IsOpen="False"
+            Severity="Informational"
+            IsClosable="True"
+            IsIconVisible="True"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,16,64"
+            CornerRadius="8"
+            Message="正在解析图片...">
+            <InfoBar.ActionButton>
+                <Button x:Name="OpenBatchReviewButton" Content="打开批量核对" Click="OnOpenBatchReviewClick" />
+            </InfoBar.ActionButton>
+        </InfoBar>
     </Grid>
 
         <!-- 合计行：固定在表格最下方，金额合计按 Σ(数量×单价) 现算 -->

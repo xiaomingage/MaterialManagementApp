@@ -15,6 +15,7 @@ public class MaterialLedger : INotifyPropertyChanged
     private double _unitPrice;
     private double _amount;
     private bool _isNewRow;
+    private bool _isChecked;
 
     /// <summary>属性变更通知，供 DataGrid 双向绑定刷新界面。</summary>
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -147,6 +148,25 @@ public class MaterialLedger : INotifyPropertyChanged
     private void RecalculateAmount()
     {
         Amount = Math.Round(_quantity * _unitPrice, 2);
+    }
+
+    /// <summary>
+    /// 表格最左侧勾选列的选中状态。仅存在于内存（不落库），
+    /// 由 ViewModel 汇总进 <c>CheckedIds</c> 用于批量修改与批量删除。
+    /// </summary>
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set
+        {
+            if (_isChecked == value)
+            {
+                return;
+            }
+
+            _isChecked = value;
+            OnPropertyChanged();
+        }
     }
 
     /// <summary>触发属性变更通知。</summary>

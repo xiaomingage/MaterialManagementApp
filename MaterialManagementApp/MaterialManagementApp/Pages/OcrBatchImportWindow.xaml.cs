@@ -294,6 +294,15 @@ public sealed partial class OcrBatchImportWindow : Window
 
     // ==================== 识别队列 ====================
 
+    /// <summary>批量识别进度快照：Current 从 1 计数；Finished=true 表示整批处理完毕。</summary>
+    public sealed record OcrBatchProgress(int Current, int Total, bool Finished);
+
+    /// <summary>
+    /// 批量识别进度广播（静态事件，窗口外如台账页订阅后可在右下角悬浮卡片展示进度）。
+    /// 订阅方务必在窗口 Closed 后退订，避免持有已销毁窗口的引用。
+    /// </summary>
+    public static event EventHandler<OcrBatchProgress>? BatchProgressChanged;
+
     /// <summary>启动识别队列循环：逐张处理待识别的卡片，一次一张，互不并发。</summary>
     private async void PumpRecognition()
     {
@@ -305,9 +314,19 @@ public sealed partial class OcrBatchImportWindow : Window
         _isRecognizing = true;
         try
         {
+            // 每张卡片处理完成后广播一次进度（第 N/共 M 张），供台账页悬浮卡片展示
+            var total = Items.Count(x => x.RecognitionPending);
+            var current = 0;
             while (Items.FirstOrDefault(x => x.RecognitionPending) is { } item)
             {
                 await RecognizeItemAsync(item);
+                current++;
+                BatchProgressChanged?.Invoke(this, new OcrBatchProgress(current, total, Finished: false));
+            }
+
+            if (total > 0)
+            {
+                BatchProgressChanged?.Invoke(this, new OcrBatchProgress(total, total, Finished: true));
             }
         }
         finally
