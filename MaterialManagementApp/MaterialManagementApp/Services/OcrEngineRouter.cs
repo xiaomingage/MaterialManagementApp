@@ -63,7 +63,10 @@ public static class OcrEngineRouter
                 try
                 {
                     var text = await OnlineAiService.Instance.RecognizeImageAsync(
-                        settings.AiBaseUrl, settings.AiApiKey, settings.AiModelName, imageBytes!, cancellationToken)
+                        settings.AiBaseUrl, settings.AiApiKey, settings.AiModelName, imageBytes!,
+                        // 豆包 seed 系列默认可能输出深度思考内容，混入正文会破坏 JSON 字段解析，需显式关闭
+                        disableThinking: string.Equals(settings.AiProvider, "豆包", StringComparison.Ordinal),
+                        cancellationToken)
                         .ConfigureAwait(false);
 
                     Logger.LogInformation("在线 AI 识别完成，服务商={Provider}，模型={Model}。", settings.AiProvider, settings.AiModelName);

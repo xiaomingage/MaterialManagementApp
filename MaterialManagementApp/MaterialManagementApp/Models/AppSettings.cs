@@ -70,8 +70,75 @@ public sealed class AppSettings
     /// <summary>在线 AI 服务地址（Base URL，如 https://api.deepseek.com）；本地 Ollama 模式下不使用。</summary>
     public string AiBaseUrl { get; set; } = string.Empty;
 
-    /// <summary>在线 AI 的 API Key；本地 Ollama 模式下不使用。</summary>
+    /// <summary>在线 AI 的 API Key；本地 Ollama 模式下不使用。内存中始终为明文，落盘时经 DPAPI 加密（见 <see cref="AiApiKeyStored"/>）。</summary>
+    [JsonIgnore]
     public string AiApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// settings.json 中实际序列化的 API Key 字段（字段名仍为 AiApiKey，值为密文）：
+    /// 读文件时自动解密到 <see cref="AiApiKey"/>，写文件时自动加密，业务层全程只接触明文。
+    /// 兼容规则：带 dpapi: 前缀的值走 DPAPI 解密（换机后解不开视为空，需重填）；
+    /// 不带前缀的旧版明文原样读入，首次保存后自动转为密文，老用户无需重填。
+    /// </summary>
+    [JsonPropertyName("AiApiKey")]
+    public string AiApiKeyStored
+    {
+        get => ProtectApiKey(AiApiKey);
+        set => AiApiKey = UnprotectApiKey(value);
+    }
+
+    /// <summary>DPAPI 密文前缀标识；不带该前缀的值视为旧版明文。</summary>
+    private const string EncryptedPrefix = "dpapi:";
+
+    /// <summary>用 Windows 当前用户级 DPAPI 加密 API Key；加密失败宁可返回空也不把明文写进配置文件。</summary>
+    /// <param name="plain">明文 Key。</param>
+    /// <returns>dpapi: 前缀的 Base64 密文；空串原样返回。</returns>
+    private static string ProtectApiKey(string plain)
+    {
+        if (string.IsNullOrEmpty(plain))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var bytes = System.Security.Cryptography.ProtectedData.Protect(
+                System.Text.Encoding.UTF8.GetBytes(plain), null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+            return EncryptedPrefix + Convert.ToBase64String(bytes);
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>解密配置文件中的 API Key；旧版明文原样返回（下次保存自动转密文），跨机解密失败返回空。</summary>
+    /// <param name="stored">配置文件中存储的值。</param>
+    /// <returns>明文 Key。</returns>
+    private static string UnprotectApiKey(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+        {
+            return string.Empty;
+        }
+
+        if (!stored.StartsWith(EncryptedPrefix, StringComparison.Ordinal))
+        {
+            return stored;
+        }
+
+        try
+        {
+            var bytes = System.Security.Cryptography.ProtectedData.Unprotect(
+                Convert.FromBase64String(stored[EncryptedPrefix.Length..]), null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
+        catch (Exception ex) when (ex is FormatException or System.Security.Cryptography.CryptographicException)
+        {
+            // 密文损坏或从其他电脑拷贝而来（DPAPI 绑定当前用户），一律视为未配置
+            return string.Empty;
+        }
+    }
 
     /// <summary>在线 AI 使用的模型名称（如 deepseek-chat）；本地 Ollama 模式下不使用。</summary>
     public string AiModelName { get; set; } = string.Empty;
@@ -86,12 +153,15 @@ public sealed class AppSettings
 
     /// <summary>
     /// 是否已配置可用的 AI 服务：
-    /// 选择本地 Ollama 时要求 OllamaUrl 与 OllamaModel 不为空；选择在线 AI 时要求 AiBaseUrl 与 AiApiKey 不为空。
+    /// 选择本地 Ollama 时要求 OllamaUrl 与 OllamaModel 不为空；选择在线 AI 时要求 AiBaseUrl、AiApiKey、AiModelName 均不为空
+    /// （模型名缺失会让识别请求每次都失败回退离线，必须在配置判定阶段就视为未配置，避免界面显示「已启用」而实际无效）。
     /// 派生属性不写回配置文件，避免 settings.json 里出现冗余字段。
     /// </summary>
     [JsonIgnore]
     public bool IsAiConfigured =>
         IsOllamaProvider
             ? !string.IsNullOrWhiteSpace(OllamaUrl) && !string.IsNullOrWhiteSpace(OllamaModel)
-            : !string.IsNullOrWhiteSpace(AiBaseUrl) && !string.IsNullOrWhiteSpace(AiApiKey);
+            : !string.IsNullOrWhiteSpace(AiBaseUrl)
+                && !string.IsNullOrWhiteSpace(AiApiKey)
+                && !string.IsNullOrWhiteSpace(AiModelName);
 }

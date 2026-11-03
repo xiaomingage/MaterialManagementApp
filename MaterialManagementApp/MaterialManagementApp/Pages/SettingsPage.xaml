@@ -289,7 +289,7 @@
                     <TextBox Header="API Base URL" Text="{x:Bind ViewModel.AiBaseUrl, Mode=TwoWay}" />
                     <PasswordBox Header="API Key" Password="{x:Bind ViewModel.AiApiKey, Mode=TwoWay}" />
                     <TextBlock
-                        Text="API Key 仅保存在本地配置文件中，绝不会上传到任何服务器"
+                        Text="API Key 经 Windows 加密后保存在本地配置文件中，绝不会上传到任何服务器；配置拷贝到其他电脑时需重新填写 Key"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                         TextWrapping="Wrap" />

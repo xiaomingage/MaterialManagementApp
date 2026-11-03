@@ -302,9 +302,7 @@ public partial class SettingsViewModel : ObservableObject
             AiBaseUrl = settings.AiBaseUrl ?? string.Empty;
             AiApiKey = settings.AiApiKey ?? string.Empty;
             AiModelName = settings.AiModelName ?? string.Empty;
-            AiStatus = settings.IsAiConfigured
-                ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
-                : "未配置模型，识别单据时将使用系统 OCR。";
+            AiStatus = BuildAiStatusText(settings);
 
             BackupRetentionCount = settings.BackupRetentionCount;
 
@@ -372,9 +370,7 @@ public partial class SettingsViewModel : ObservableObject
             // 主题必须立刻反映到界面，否则用户要重启才能看到效果
             ApplyTheme(settings.ThemeMode);
 
-            AiStatus = settings.IsAiConfigured
-                ? $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {(settings.IsOllamaProvider ? settings.OllamaModel : settings.AiModelName)}，失败自动回退系统 OCR。"
-                : "未配置模型，识别单据时将使用系统 OCR。";
+            AiStatus = BuildAiStatusText(settings);
 
             StatusMessage = "设置已保存。";
             _logger.LogInformation("应用设置已保存。");
@@ -384,6 +380,50 @@ public partial class SettingsViewModel : ObservableObject
             _logger.LogError(ex, "保存应用设置失败。");
             StatusMessage = $"保存失败：{ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// 生成 AI 配置状态文案：已配置完整时显示启用的服务商与模型；
+    /// 配置不完整时具体指出缺了哪一项（尤其是「Key 已填但模型名为空」——
+    /// 此前 IsAiConfigured 不检查模型名，界面会误显示已启用，实际识别永远回退离线）。
+    /// </summary>
+    /// <param name="settings">当前生效的设置对象。</param>
+    /// <returns>展示给用户的状态文案。</returns>
+    private static string BuildAiStatusText(AppSettings settings)
+    {
+        if (settings.IsAiConfigured)
+        {
+            var engine = settings.IsOllamaProvider ? settings.OllamaModel : settings.AiModelName;
+            return $"已启用 AI（{settings.AiProvider}）：识别单据时优先调用 {engine}，失败自动回退系统 OCR。";
+        }
+
+        if (settings.IsOllamaProvider)
+        {
+            return string.IsNullOrWhiteSpace(settings.OllamaUrl) || string.IsNullOrWhiteSpace(settings.OllamaModel)
+                ? "本地 AI 未配置完整（需要 Ollama 地址与模型名），识别单据时将使用系统 OCR。"
+                : "未配置模型，识别单据时将使用系统 OCR。";
+        }
+
+        // 在线服务商：逐项点名缺失的配置，用户照着补即可
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(settings.AiBaseUrl))
+        {
+            missing.Add("服务地址（Base URL）");
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.AiApiKey))
+        {
+            missing.Add("API Key");
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.AiModelName))
+        {
+            missing.Add("模型名称");
+        }
+
+        return missing.Count > 0
+            ? $"AI 配置不完整，缺少：{string.Join("、", missing)}；识别单据时将使用系统 OCR。"
+            : "未配置模型，识别单据时将使用系统 OCR。";
     }
 
     /// <summary>恢复默认配置并刷新表单与主题。</summary>

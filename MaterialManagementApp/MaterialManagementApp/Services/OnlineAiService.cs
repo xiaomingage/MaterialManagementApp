@@ -54,6 +54,7 @@ public sealed class OnlineAiService
     /// <param name="apiKey">API Key。</param>
     /// <param name="model">模型名称（须为支持图片输入的视觉模型，也兼容火山方舟的 ep-xxx 接入点）。</param>
     /// <param name="imageBytes">图片原始字节（jpg/png 等均可）。</param>
+    /// <param name="disableThinking">是否携带「关闭深度思考」参数（豆包 seed 系列需要，思考内容会混入输出污染 JSON 解析；其他服务商传 false）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>模型返回的识别结果全文（约定的 JSON 协议文本）。</returns>
     /// <exception cref="InvalidOperationException">参数缺失、请求失败或返回体无法解析时抛出，消息可直接展示给用户。</exception>
@@ -62,6 +63,7 @@ public sealed class OnlineAiService
         string apiKey,
         string model,
         byte[] imageBytes,
+        bool disableThinking = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -86,33 +88,50 @@ public sealed class OnlineAiService
 
         var url = BuildEndpoint(baseUrl, "/chat/completions");
 
-        var payload = new
+        // 用 JsonObject 构建 payload：豆包需要附加 thinking 参数关闭深度思考，
+        // 其他服务商不携带该字段（未知字段虽多数会被忽略，但显式不传最稳）
+        var payload = new System.Text.Json.Nodes.JsonObject
         {
-            model,
-            messages = new object[]
+            ["model"] = model,
+            ["messages"] = new System.Text.Json.Nodes.JsonArray
             {
-                new
+                new System.Text.Json.Nodes.JsonObject
                 {
-                    role = "user",
-                    content = new object[]
+                    ["role"] = "user",
+                    ["content"] = new System.Text.Json.Nodes.JsonArray
                     {
-                        new { type = "text", text = VisionPrompt },
-                        new
+                        new System.Text.Json.Nodes.JsonObject
                         {
-                            type = "image_url",
-                            image_url = new { url = $"data:{DetectImageMime(imageBytes)};base64,{Convert.ToBase64String(imageBytes)}" }
+                            ["type"] = "text",
+                            ["text"] = VisionPrompt
+                        },
+                        new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["url"] = $"data:{DetectImageMime(imageBytes)};base64,{Convert.ToBase64String(imageBytes)}"
+                            }
                         }
                     }
                 }
             },
             // 温度取 0：识别任务要的是确定性输出，越低越稳
-            temperature = 0.0,
-            stream = false
+            ["temperature"] = 0.0,
+            ["stream"] = false
         };
+
+        if (disableThinking)
+        {
+            payload["thinking"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["type"] = "disabled"
+            };
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
 
