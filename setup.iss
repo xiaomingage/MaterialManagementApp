@@ -10,10 +10,13 @@
 ;    2. 用 Inno Setup Compiler 编译本脚本，产物输出到 installer\ 目录
 ;
 ;  设计说明：
-;    - PrivilegesRequired=lowest：应用把数据库写在安装目录的 Data 子目录下，
-;      若以管理员身份安装到 Program Files，普通用户运行时无法写入。
-;      因此在最低权限下安装，并默认装到当前用户可写的位置。
-;      若用户手工改到 C:\Program Files 这类受保护目录，Data 写入会失败。
+;    - 支持两种安装模式（PrivilegesRequiredOverridesAllowed=dialog 由用户选择）：
+;      ① 为自己安装（默认）：最低权限装到当前用户目录，数据放在 程序目录\Data，
+;         数据跟程序走，绿色便携；
+;      ② 为所有用户：提权装到 Program Files（程序目录普通用户不可写），
+;         数据自动重定向到 %LOCALAPPDATA%\MaterialSystem，并写入
+;         install-config.json（dataRoot 字段）告知程序数据根目录，
+;         数据库/配置/图片统一落到用户本地数据目录，普通用户运行时可写。
 ;    - Data 目录属于用户数据，绝不打包进安装文件，只在安装时创建空目录。
 ; ============================================================================
 
@@ -89,16 +92,59 @@ begin
   Result := GetDateTimeString('yyyymmddhhnnss', #0, #0);
 end;
 
-{ 返回安装目录下 Data 文件夹路径 }
+{ 返回数据目录（数据库与配置所在），随安装模式切换：
+  为自己安装 —— 安装目录\Data（程序目录归当前用户所有，可写，数据跟程序走）
+  为所有用户 —— 用户本地目录\MaterialSystem\Data（Program Files 普通用户不可写，
+               数据放到当前用户本地数据目录，与程序内 AppPaths 历史约定一致。
+               注意：本注释内不能出现花括号常量，花括号会提前闭合 Pascal 注释） }
 function GetDataDir: string;
 begin
-  Result := ExpandConstant('{app}') + '\Data';
+  if IsAdminInstallMode then
+    Result := ExpandConstant('{localappdata}') + '\MaterialSystem\Data'
+  else
+    Result := ExpandConstant('{app}') + '\Data';
+end;
+
+{ 返回数据根目录：为所有用户安装时作为 install-config.json 的 dataRoot 值写入，
+  程序据此把数据库、settings.json、台账图片统一放到该目录下 }
+function GetDataRoot: string;
+begin
+  if IsAdminInstallMode then
+    Result := ExpandConstant('{localappdata}') + '\MaterialSystem'
+  else
+    Result := ExpandConstant('{app}');
 end;
 
 { 返回数据库文件完整路径，与程序内 SettingsService.EffectiveDatabasePath 的默认值保持一致 }
 function GetDatabasePath: string;
 begin
   Result := GetDataDir + '\MaterialSystem.db';
+end;
+
+{ 为所有用户安装：把数据根目录写入 install-config.json（与 exe 同目录）。
+  SaveStringToFile 按系统 ANSI 码页写入，中文用户名路径由程序内
+  AppPaths.ReadBestEncoding 自动识别（GBK 回退），与历史安装程序行为一致 }
+procedure WriteInstallConfig;
+var
+  ConfigPath: string;
+  Root: string;
+  Json: string;
+begin
+  ConfigPath := ExpandConstant('{app}') + '\install-config.json';
+  Root := GetDataRoot;
+  { JSON 字符串内的反斜杠必须双写转义（C:\Users\... → C:\\Users\\...） }
+  StringChangeEx(Root, '\', '\\', True);
+  Json := '{"dataRoot":"' + Root + '"}';
+  if SaveStringToFile(ConfigPath, Json + #13#10, False) then
+    Log('已写入数据目录配置：' + ConfigPath + ' -> ' + GetDataRoot)
+  else
+    Log('写入 install-config.json 失败：' + ConfigPath);
+end;
+
+{ 为自己安装：删除可能残留的 install-config.json，数据目录恢复为 程序目录\Data }
+procedure RemoveInstallConfig;
+begin
+  DeleteFile(ExpandConstant('{app}') + '\install-config.json');
 end;
 
 { 确保 Data 目录存在，否则备份路径不可写 }
@@ -152,6 +198,14 @@ begin
         MsgBox('数据库还原失败，备份文件仍保留在：' + #13#10 + BackupFilePath + #13#10 +
                '请手工将其复制为 MaterialSystem.db 后重新启动程序。', mbError, MB_OK);
     end;
+
+    { 按安装模式落数据目录配置：
+      为所有用户 → 写 install-config.json 把数据重定向到用户本地目录；
+      为自己 → 清掉残留配置，数据仍跟程序目录走 }
+    if IsAdminInstallMode then
+      WriteInstallConfig
+    else
+      RemoveInstallConfig;
   end;
 end;
 
