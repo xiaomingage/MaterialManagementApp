@@ -87,7 +87,7 @@
         </StackPanel>
 
         <!-- 表格区：18 个字段全部作为列，单元格可编辑；行末按行状态显示保存/删除或保存/取消 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             x:Name="LedgerGrid"
             Grid.Row="3"
             AutoGenerateColumns="False"
@@ -97,7 +97,7 @@
             SelectionMode="Single"
             SelectionChanged="OnLedgerSelectionChanged"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn
                     Binding="{Binding ProjectName, Mode=TwoWay}"
                     Header="使用工程名称" />
@@ -174,8 +174,8 @@
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行：固定在表格最下方 -->
         <Border

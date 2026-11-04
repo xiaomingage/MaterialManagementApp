@@ -128,7 +128,7 @@
              已入库的行离开编辑即自动保存；草稿行由上方「保存」批量入库；行末仅保留「删除」。
              无数据时叠加居中空态提示（记录数为 0 时显示，新增/删除行即时切换） -->
         <Grid Grid.Row="3">
-            <controls:DataGrid
+            <ctrl:LedgerDataGrid
                 x:Name="LedgerGrid"
                 AutoGenerateColumns="False"
             Background="Transparent"
@@ -142,10 +142,10 @@
             ItemsSource="{x:Bind ViewModel.Ledgers, Mode=OneWay}">
             <!-- 右键表格弹出「显示/隐藏列」配置菜单（动态生成，见 code-behind）；
                  列宽拖动由 DataGrid 默认 CanUserResizeColumns 支持 -->
-            <controls:DataGrid.ContextFlyout>
+            <ctrl:LedgerDataGrid.ContextFlyout>
                 <MenuFlyout Opening="OnColumnMenuOpening" Placement="Bottom" />
-            </controls:DataGrid.ContextFlyout>
-            <controls:DataGrid.Columns>
+            </ctrl:LedgerDataGrid.ContextFlyout>
+            <ctrl:LedgerDataGrid.Columns>
                 <!-- 最左侧勾选列：勾选多行后顶部出现「批量修改 / 删除选中」 -->
                 <controls:DataGridTemplateColumn CanUserResize="False" CanUserReorder="False">
                     <controls:DataGridTemplateColumn.CellTemplate>
@@ -272,8 +272,8 @@
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 空态：表格无数据时显示，居中不遮挡表头；新增行后即时隐藏。
              IsHitTestVisible=False 让点击穿透到表格空白区，直接触发「点空白即新增」 -->

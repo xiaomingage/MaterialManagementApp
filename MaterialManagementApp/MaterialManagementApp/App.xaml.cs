@@ -186,24 +186,37 @@ namespace MaterialManagementApp
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         }
 
-        /// <summary>UI 线程未处理异常（WinUI 层）。记录后保持默认行为（应用终止）。</summary>
+        /// <summary>UI 线程未处理异常（WinUI 层）。写 Crash.log 并弹友好提示，标记 Handled 保持应用存活。</summary>
         private void OnAppUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
         {
-            _logger.LogCritical(e.Exception, "发生未处理的 UI 线程异常，应用即将退出。");
+            _logger.LogCritical(e.Exception, "发生未处理的 UI 线程异常。");
             Serilog.Log.CloseAndFlush();
+
+            // 兜底消化：绝大多数一次性异常（绑定/集合竞态）消化后 UI 仍可用；
+            // 短时间反复崩溃时 Report 返回 false，放行终止避免死循环弹窗
+            e.Handled = CrashReporter.Report(e.Exception, "UI 线程");
+            if (!e.Handled)
+            {
+                _logger.LogCritical("连续崩溃超过上限，放行进程终止。");
+                Serilog.Log.CloseAndFlush();
+            }
         }
 
-        /// <summary>非 UI 线程未处理异常（运行时层兜底）。</summary>
+        /// <summary>非 UI 线程未处理异常（运行时层兜底）。写 Crash.log；IsTerminating 时进程仍会终止。</summary>
         private void OnDomainUnhandledException(object sender, System.UnhandledExceptionEventArgs e)
         {
-            _logger.LogCritical(e.ExceptionObject as Exception, "发生未处理的应用域异常。IsTerminating={IsTerminating}", e.IsTerminating);
+            var ex = e.ExceptionObject as Exception;
+            _logger.LogCritical(ex, "发生未处理的应用域异常。IsTerminating={IsTerminating}", e.IsTerminating);
             Serilog.Log.CloseAndFlush();
+            CrashReporter.Report(ex, e.IsTerminating ? "应用域（致命，进程将退出）" : "应用域");
         }
 
-        /// <summary>Task 中被吞掉的异常（未 await / 未观察）。</summary>
+        /// <summary>Task 中被吞掉的异常（未 await / 未观察）。写 Crash.log 备查，不影响运行。</summary>
         private void OnUnobservedTaskException(object? sender, System.Threading.Tasks.UnobservedTaskExceptionEventArgs e)
         {
             _logger.LogError(e.Exception, "检测到未被观察的 Task 异常。");
+            CrashReporter.Report(e.Exception, "后台任务（未观察）");
+            e.SetObserved();
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]

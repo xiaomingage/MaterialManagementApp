@@ -81,7 +81,7 @@
         </StackPanel>
 
         <!-- 表格区：单元格可编辑；行末按行状态显示保存/删除或保存/取消 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             x:Name="LedgerGrid"
             Grid.Row="3"
             AutoGenerateColumns="False"
@@ -91,7 +91,7 @@
             SelectionMode="Single"
             SelectionChanged="OnLedgerSelectionChanged"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn
                     Binding="{Binding Name, Mode=TwoWay}"
                     Header="供应商名称" />
@@ -135,8 +135,8 @@
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行：固定在表格最下方 -->
         <Border
@@ -184,6 +184,13 @@
                     <Button Content="新增" Click="OnItemNewRowClick" />
                     <Button Content="删除" Click="OnItemDeleteSelectedClick" />
                     <Button Content="刷新" Click="OnItemRefreshClick" />
+                    <!-- AI 解析合同 PDF：识别主表信息与材料明细后回显，用户核对编辑后手动保存 -->
+                    <Button
+                        x:Name="AiParseBtn"
+                        Margin="16,0,0,0"
+                        Content="AI 解析合同 PDF"
+                        Click="OnAiParseContractClick"
+                        Style="{ThemeResource AccentButtonStyle}" />
                     <TextBlock
                         x:Name="ItemStatusText"
                         Margin="8,0,0,0"
@@ -192,7 +199,7 @@
                         TextWrapping="Wrap" />
                 </StackPanel>
 
-                <controls:DataGrid
+                <ctrl:LedgerDataGrid
                     x:Name="ItemGrid"
                     Grid.Row="2"
                     AutoGenerateColumns="False"
@@ -202,7 +209,7 @@
                     SelectionMode="Single"
                     SelectionChanged="OnItemSelectionChanged"
                     ItemsSource="{x:Bind ContractItems.Items, Mode=OneWay}">
-                    <controls:DataGrid.Columns>
+                    <ctrl:LedgerDataGrid.Columns>
                         <controls:DataGridTextColumn
                             Binding="{Binding MaterialName, Mode=TwoWay}"
                             Header="材料名称" />
@@ -237,8 +244,8 @@
                                 </DataTemplate>
                             </controls:DataGridTemplateColumn.CellTemplate>
                         </controls:DataGridTemplateColumn>
-                    </controls:DataGrid.Columns>
-                </controls:DataGrid>
+                    </ctrl:LedgerDataGrid.Columns>
+                </ctrl:LedgerDataGrid>
             </Grid>
         </Border>
     </Grid>

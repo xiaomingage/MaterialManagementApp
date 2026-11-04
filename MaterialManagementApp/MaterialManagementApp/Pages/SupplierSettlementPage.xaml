@@ -79,20 +79,20 @@
         </StackPanel>
 
         <!-- 表格区：只读汇总 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             Grid.Row="3"
             AutoGenerateColumns="False"
             CanUserSortColumns="True"
             GridLinesVisibility="All"
             IsReadOnly="True"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn Binding="{Binding Name}" Header="供应商名称" />
                 <controls:DataGridTextColumn Binding="{Binding ContractNo}" Header="合同编号" />
                 <controls:DataGridTextColumn Binding="{Binding SignDate}" Header="签约日期" />
                 <controls:DataGridTextColumn Binding="{Binding MonthlySettlement}" Header="月度结算（元）" />
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行：固定在表格最下方 -->
         <Border

@@ -66,20 +66,20 @@
         </StackPanel>
 
         <!-- 表格区：只读月度汇总 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             Grid.Row="3"
             AutoGenerateColumns="False"
             CanUserSortColumns="True"
             GridLinesVisibility="All"
             IsReadOnly="True"
             ItemsSource="{x:Bind ViewModel.Summaries, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn Binding="{Binding WriteOffMonth}" Header="核销月份" />
                 <controls:DataGridTextColumn Binding="{Binding ItemCount}" Header="记录条数" />
                 <controls:DataGridTextColumn Binding="{Binding TotalQty}" Header="数量合计" />
                 <controls:DataGridTextColumn Binding="{Binding TotalAmount}" Header="金额合计（元）" />
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行：固定在表格最下方 -->
         <Border

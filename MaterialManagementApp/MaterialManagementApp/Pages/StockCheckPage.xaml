@@ -74,7 +74,7 @@
         </StackPanel>
 
         <!-- 表格区：聚合汇总数据，整表只读 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             Grid.Row="3"
             AutoGenerateColumns="False"
             CanUserSortColumns="True"
@@ -82,7 +82,7 @@
             IsReadOnly="True"
             SelectionMode="Single"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn Binding="{Binding MaterialName}" Header="物资名称" />
                 <controls:DataGridTextColumn Binding="{Binding Specification}" Header="规格型号" />
                 <controls:DataGridTextColumn Binding="{Binding Unit}" Header="单位" />
@@ -90,8 +90,8 @@
                 <controls:DataGridTextColumn Binding="{Binding OutQty}" Header="累计出库" />
                 <controls:DataGridTextColumn Binding="{Binding ReturnQty}" Header="累计退库" />
                 <controls:DataGridTextColumn Binding="{Binding Balance}" Header="账面结存" />
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行：固定在表格最下方 -->
         <Border

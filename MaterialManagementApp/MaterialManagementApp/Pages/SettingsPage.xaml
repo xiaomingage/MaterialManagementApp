@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:MaterialManagementApp.Models"
-    xmlns:controls="using:CommunityToolkit.WinUI.UI.Controls"
+    xmlns:controls="using:CommunityToolkit.WinUI.UI.Controls" xmlns:ctrl="using:MaterialManagementApp.Controls"
     xmlns:vm="using:MaterialManagementApp.ViewModels"
     xmlns:local="using:MaterialManagementApp.Pages"
     Loaded="Page_Loaded"
@@ -331,7 +331,7 @@
 
                     <!-- 项目部管理：只读表格 + 弹窗编辑，替代旧的行内 TextBox/保存/删除按钮 -->
                     <TextBlock Text="项目部管理" FontWeight="SemiBold" />
-                    <controls:DataGrid
+                    <ctrl:LedgerDataGrid
                         x:Name="DeptGrid"
                         SelectedItem="{x:Bind ViewModel.SelectedDept, Mode=TwoWay}"
                         ItemsSource="{x:Bind ViewModel.ProjectDepts, Mode=OneWay}"
@@ -344,13 +344,13 @@
                         HorizontalAlignment="Left"
                         MinWidth="360"
                         DoubleTapped="OnDeptGridDoubleTapped">
-                        <controls:DataGrid.Columns>
+                        <ctrl:LedgerDataGrid.Columns>
                             <controls:DataGridTextColumn
                                 Header="项目部名称"
                                 Binding="{Binding Name}"
                                 Width="*" />
-                        </controls:DataGrid.Columns>
-                    </controls:DataGrid>
+                        </ctrl:LedgerDataGrid.Columns>
+                    </ctrl:LedgerDataGrid>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button
                             Content="＋ 新增项目部"
@@ -367,7 +367,7 @@
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
-                    <controls:DataGrid
+                    <ctrl:LedgerDataGrid
                         x:Name="PhaseGrid"
                         SelectedItem="{x:Bind ViewModel.SelectedPhase, Mode=TwoWay}"
                         ItemsSource="{x:Bind ViewModel.ProjectPhases, Mode=OneWay}"
@@ -380,13 +380,13 @@
                         HorizontalAlignment="Left"
                         MinWidth="360"
                         DoubleTapped="OnPhaseGridDoubleTapped">
-                        <controls:DataGrid.Columns>
+                        <ctrl:LedgerDataGrid.Columns>
                             <controls:DataGridTextColumn
                                 Header="期数名称"
                                 Binding="{Binding Name}"
                                 Width="*" />
-                        </controls:DataGrid.Columns>
-                    </controls:DataGrid>
+                        </ctrl:LedgerDataGrid.Columns>
+                    </ctrl:LedgerDataGrid>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button
                             Content="＋ 新增期数"

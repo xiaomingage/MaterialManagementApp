@@ -24,10 +24,10 @@
 ; AppId 一旦发布就不要再改，否则升级会被当成全新安装，旧版本不会自动卸载
 AppId={{8F3C2A6E-4D71-4B9A-9E5C-2F7A1D8B6C04}
 AppName=MaterialManagementApp
-AppVersion=1.6.0
-AppVerName=MaterialManagementApp 1.6.0
+AppVersion=1.7.0
+AppVerName=MaterialManagementApp 1.7.0
 AppPublisher=MaterialManagementApp
-VersionInfoVersion=1.6.0.0
+VersionInfoVersion=1.7.0.0
 VersionInfoDescription=工程项目物资管理系统
 
 ; 最低权限下 {autopf} 自动映射到当前用户可写目录，避免 UAC 提权
@@ -45,7 +45,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
 OutputDir=installer
-OutputBaseFilename=MaterialManagementApp_Setup_1.6.0
+OutputBaseFilename=MaterialManagementApp_Setup_1.7.0
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

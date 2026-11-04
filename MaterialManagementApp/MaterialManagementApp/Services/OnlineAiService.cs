@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -157,6 +159,143 @@ public sealed class OnlineAiService
         }
 
         // OpenAI 兼容协议：choices[0].message.content；部分服务会返回数组片段，此处仅处理纯文本
+        return ExtractChatContent(json);
+    }
+
+    /// <summary>
+    /// 用自定义提示词调用在线视觉模型识别多张图片（OpenAI 兼容协议）。
+    /// 与 <see cref="RecognizeImageAsync"/> 的区别：提示词由调用方指定、支持一次发送多张图片，
+    /// 供合同 PDF 多页解析等场景复用；响应结构与错误处理保持一致。
+    /// </summary>
+    /// <param name="baseUrl">服务地址（如 https://ark.cn-beijing.volces.com/api/v3）。</param>
+    /// <param name="apiKey">API Key。</param>
+    /// <param name="model">模型名称（须为支持图片输入的视觉模型，也兼容火山方舟的 ep-xxx 接入点）。</param>
+    /// <param name="images">图片原始字节列表（按页序排列，jpg/png 均可）。</param>
+    /// <param name="prompt">调用方自定义的提示词（约定模型输出严格 JSON）。</param>
+    /// <param name="disableThinking">是否携带「关闭深度思考」参数（豆包 seed 系列需要；其他服务商传 false）。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>模型返回的全文文本。</returns>
+    /// <exception cref="InvalidOperationException">参数缺失、请求失败或返回体无法解析时抛出，消息可直接展示给用户。</exception>
+    public async Task<string> ExtractAsync(
+        string baseUrl,
+        string apiKey,
+        string model,
+        IReadOnlyList<byte[]> images,
+        string prompt,
+        bool disableThinking = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            throw new InvalidOperationException("在线 AI 服务地址为空，请先在设置中填写。");
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException("在线 AI 的 API Key 为空，请先在设置中填写。");
+        }
+
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            throw new InvalidOperationException("在线 AI 模型名称为空，请先在设置中填写（须为支持识图的视觉模型）。");
+        }
+
+        if (images is null || images.Count == 0 || images.Any(i => i is null || i.Length == 0))
+        {
+            throw new InvalidOperationException("图片内容为空，无法识别。");
+        }
+
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            throw new InvalidOperationException("识别提示词为空，无法调用在线 AI。");
+        }
+
+        var url = BuildEndpoint(baseUrl, "/chat/completions");
+
+        // content = 1 个文本节点 + N 个图片节点（按页序），模型会综合多页内容作答
+        var content = new System.Text.Json.Nodes.JsonArray
+        {
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = prompt
+            }
+        };
+        foreach (var image in images)
+        {
+            content.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["url"] = $"data:{DetectImageMime(image)};base64,{Convert.ToBase64String(image)}"
+                }
+            });
+        }
+
+        var payload = new System.Text.Json.Nodes.JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = content
+                }
+            },
+            // 温度取 0：识别任务要的是确定性输出，越低越稳
+            ["temperature"] = 0.0,
+            ["stream"] = false
+        };
+
+        if (disableThinking)
+        {
+            payload["thinking"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["type"] = "disabled"
+            };
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
+
+        string json;
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var detail = TryReadError(json) ?? $"{(int)response.StatusCode} {response.ReasonPhrase}";
+                throw new InvalidOperationException($"在线 AI 请求失败：{detail}");
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException($"无法连接在线 AI 服务：{ex.Message}", ex);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("在线 AI 请求超时，请检查网络后重试。", ex);
+        }
+
+        return ExtractChatContent(json);
+    }
+
+    /// <summary>
+    /// 从 chat/completions 响应体提取 choices[0].message.content 的文本。
+    /// 部分兼容服务会把 content 拆成多段数组，这里把文本片段拼接回来。
+    /// </summary>
+    /// <param name="json">响应体 JSON 文本。</param>
+    /// <returns>模型输出的全文。</returns>
+    /// <exception cref="InvalidOperationException">响应缺少关键字段或不是合法 JSON 时抛出。</exception>
+    private static string ExtractChatContent(string json)
+    {
         try
         {
             using var document = JsonDocument.Parse(json);

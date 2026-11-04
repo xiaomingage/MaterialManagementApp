@@ -81,7 +81,7 @@
         </StackPanel>
 
         <!-- 供应商合同表格 -->
-        <controls:DataGrid
+        <ctrl:LedgerDataGrid
             x:Name="LedgerGrid"
             Grid.Row="3"
             AutoGenerateColumns="False"
@@ -91,7 +91,7 @@
             SelectionMode="Single"
             SelectionChanged="OnLedgerSelectionChanged"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}">
-            <controls:DataGrid.Columns>
+            <ctrl:LedgerDataGrid.Columns>
                 <controls:DataGridTextColumn
                     Binding="{Binding Name, Mode=TwoWay}"
                     Header="供应商名称" />
@@ -125,8 +125,8 @@
                         </DataTemplate>
                     </controls:DataGridTemplateColumn.CellTemplate>
                 </controls:DataGridTemplateColumn>
-            </controls:DataGrid.Columns>
-        </controls:DataGrid>
+            </ctrl:LedgerDataGrid.Columns>
+        </ctrl:LedgerDataGrid>
 
         <!-- 合计行 -->
         <Border
