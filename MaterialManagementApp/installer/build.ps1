@@ -35,15 +35,16 @@ if (-not $SkipPublish) {
     Write-Host '      Done.' -ForegroundColor DarkGray
 
     Write-Host '[2/3] Restoring and publishing Release self-contained (win-x64)...' -ForegroundColor Cyan
-    dotnet restore $project --nologo
+    # 用管道 Out-Host 把 dotnet 的输出消费掉，避免 PowerShell 把工具输出当错误处理；
+    # 同时 Start-Process 隔离反而会让后续 Get-Item / Split-Path 属性读取偶发返回 null
+    dotnet restore $project --nologo | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE" }
-    dotnet publish $project -c Release -r win-x64 -p:Platform=x64 --self-contained true -v:m
+    dotnet publish $project -c Release -r win-x64 -p:Platform=x64 --self-contained true -v:m | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
-    # dotnet publish 会原样拷贝 bin/Release 下的所有子目录，包括 Data\*.db（开发态库）、
-    # Logs\*.log（运行时日志）、*.trn（遥测锁文件）——这些是用户数据/运行时副产物，
-    # 绝不能被打进安装包。publish 完成后立即清理，只保留程序本体与必要资源。
-    $publishDir = Join-Path (Split-Path $project -Parent) 'bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish'
+    # publish 产物路径
+    $projInfo = Get-Item $project
+    $publishDir = Join-Path $projInfo.DirectoryName 'bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish'
     $cleanup = @(
         @{ Sub = 'Data'; Filter = '*.db' },
         @{ Sub = 'Data'; Filter = '*.db-wal' },
