@@ -37,11 +37,17 @@ public sealed class SettingsService
     public string SettingsFilePath { get; }
 
     /// <summary>
-    /// 默认数据库存放目录：主程序 exe 所在目录\Data（AppContext.BaseDirectory）。
-    /// 配置 DatabasePath 为空时数据库落在这里，软件拷到哪数据就跟到哪。
+    /// 默认数据库存放目录：
+    /// 安装器指定了数据根目录时（install-config.json 的 dataRoot，见 AppPaths.DataRoot）
+    /// 用 根目录\Data——「为所有用户安装」时程序目录在 Program Files 不可写，
+    /// 数据库必须跟随配置与图片一起落到用户本地数据目录；
+    /// 未安装或未配置时用主程序 exe 所在目录\Data（AppContext.BaseDirectory），
+    /// 软件拷到哪数据就跟到哪（绿色便携）。
     /// 该目录由 <c>DatabaseService</c> 在解析路径时自动创建，本属性只给出位置，不做 IO。
     /// </summary>
-    public static string DefaultDatabaseFolder => AppPaths.ProgramDataDir;
+    public static string DefaultDatabaseFolder => AppPaths.DataRoot is { } dataRoot
+        ? Path.Combine(dataRoot, "Data")
+        : AppPaths.ProgramDataDir;
 
     /// <summary>引导文件名：内容为一行自定义 settings.json 的完整路径；文件缺失或为空表示使用默认位置。</summary>
     private const string SettingsRedirectFileName = "settings.path";

@@ -22,7 +22,10 @@ Logs/
 *.log
 
 # ===== 安装包输出 =====
-**/installer/output/
+# dotnet publish 产物与 Inno Setup 安装包：体积大且可由脚本重建，
+# 通过 GitHub Release 分发，不入库
+/installer/
+/publish/
 
 # ===== Python（OCR 批处理工具）=====
 __pycache__/
