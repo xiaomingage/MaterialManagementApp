@@ -14,9 +14,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$solutionDir = Split-Path $PSScriptRoot -Parent
+# 用 MyInvocation 取脚本自身路径（比 $PSScriptRoot 更稳，兼容 PowerShell 5.1 的所有调用方式）
+$scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$solutionDir = Split-Path $scriptDir -Parent
 $project     = Join-Path $solutionDir 'MaterialManagementApp\MaterialManagementApp.csproj'
-$issScript   = Join-Path $PSScriptRoot 'setup.iss'
+$issScript   = Join-Path $scriptDir 'setup.iss'
 
 # Try both per-machine and per-user Inno Setup locations
 $isccCandidates = @(
@@ -37,6 +39,31 @@ if (-not $SkipPublish) {
     if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE" }
     dotnet publish $project -c Release -r win-x64 -p:Platform=x64 --self-contained true -v:m
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+
+    # dotnet publish 会原样拷贝 bin/Release 下的所有子目录，包括 Data\*.db（开发态库）、
+    # Logs\*.log（运行时日志）、*.trn（遥测锁文件）——这些是用户数据/运行时副产物，
+    # 绝不能被打进安装包。publish 完成后立即清理，只保留程序本体与必要资源。
+    $publishDir = Join-Path (Split-Path $project -Parent) 'bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish'
+    $cleanup = @(
+        @{ Sub = 'Data'; Filter = '*.db' },
+        @{ Sub = 'Data'; Filter = '*.db-wal' },
+        @{ Sub = 'Data'; Filter = '*.db-shm' },
+        @{ Sub = 'Data'; Filter = '*.db-journal' },
+        @{ Sub = 'Logs'; Filter = '*.log' },
+        @{ Sub = '.';   Filter = '*.trn' }
+    )
+    foreach ($c in $cleanup) {
+        $target = if ($c.Sub -eq '.') { $publishDir } else { Join-Path $publishDir $c.Sub }
+        if (Test-Path $target) {
+            Get-ChildItem $target -Filter $c.Filter -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # Logs 目录若清空，一并删除——安装包不需要空目录
+    $logsDir = Join-Path $publishDir 'Logs'
+    if ((Test-Path $logsDir) -and -not (Get-ChildItem $logsDir -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item $logsDir -Force
+    }
+    Write-Host "      Publish output cleaned ($($cleanup.Count) patterns removed)." -ForegroundColor DarkGray
 } else {
     Write-Host '[1/2] Skipping publish, reusing existing publish output.' -ForegroundColor Yellow
 }

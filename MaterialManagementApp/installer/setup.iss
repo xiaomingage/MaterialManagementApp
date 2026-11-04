@@ -57,10 +57,12 @@ RestartApplications=no
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
-; 打包内容只含程序文件（exe/dll/资源）；显式排除任何 .db 数据库文件及其 WAL/SHM 附属文件，
+; 打包内容只含程序文件（exe/dll/资源）；用 **\ 跨目录通配符排除任意嵌套层级的
+; 用户数据：数据库（.db + WAL/SHM 附属文件）、运行时日志、临时锁文件。
 ; 升级覆盖安装绝不会覆盖用户数据库；数据库随软件放在 {app}\Data（便携），
-; 历史安装版仍在 install-config.json 指定的数据目录，两者均不随安装包分发或覆盖
-Source: "{#PublishDir}\*"; Excludes: "*.db *.db-wal *.db-shm *.db-journal"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 历史安装版仍在 install-config.json 指定的数据目录，两者均不随安装包分发或覆盖。
+; settings.json 是程序首次运行必需的默认配置，**不排除**，安装时作为初始模板。
+Source: "{#PublishDir}\*"; Excludes: "**\*.db **\*.db-wal **\*.db-shm **\*.db-journal **\Logs\** **\*.log **\*.trn"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; 桌面快捷方式
