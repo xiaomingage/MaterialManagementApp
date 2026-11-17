@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
+using MaterialManagementApp.Services;
 using Windows.Storage.Pickers;
 
 namespace MaterialManagementApp.Common;
@@ -42,6 +43,13 @@ public static class ExcelImporter
         if (file is null)
         {
             return null;
+        }
+
+        // 导入的 Excel 先归档一份到 Imports\Excel\yyyyMMdd，用户仍从原文件读取，不改变原文件
+        var archived = FileStorageService.Instance.StoreImport(FileStorageService.ExcelCategory, file.Path);
+        if (!archived.Success)
+        {
+            throw new IOException($"导入文件归档失败：{archived.Error}");
         }
 
         using var source = await file.OpenStreamForReadAsync();

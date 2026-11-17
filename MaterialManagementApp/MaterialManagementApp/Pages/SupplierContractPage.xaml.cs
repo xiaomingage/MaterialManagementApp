@@ -298,48 +298,29 @@ public sealed partial class SupplierContractPage : Page
                 return;
             }
 
-            var contractsDir = Path.Combine(ResolveDataRoot(), ContractsSubDir);
-
-            // 目标项目存储文件夹不存在（且创建失败）时：弹窗提示、不上传、不写库，表单内容保持不变
-            if (!Directory.Exists(contractsDir))
+            // 归档到 Imports\合同\yyyyMMdd：文件名冲突自动追加序号，绝不覆盖，
+            // 写入失败直接返回失败原因，不降级写到其他目录
+            var archived = FileStorageService.Instance.StoreImport(FileStorageService.ContractCategory, file.Path);
+            if (!archived.Success || string.IsNullOrWhiteSpace(archived.Path))
             {
-                try
-                {
-                    Directory.CreateDirectory(contractsDir);
-                }
-                catch (Exception dirEx)
-                {
-                    logger.LogError(dirEx,
-                        "创建合同存储目录失败。时间={Time:yyyy-MM-dd HH:mm:ss}，供应商={Supplier}，合同编号={ContractNo}，目标路径={Dir}。",
-                        DateTime.Now, supplier.Name, supplier.ContractNo, contractsDir);
-                    await ShowErrorDialogAsync("保存失败", "保存失败，在指定的路径找不到该项目目录，请先创建项目文件夹！");
-                    ContractFileStatusText.Text = string.Empty;
-                    return;
-                }
+                logger.LogError(
+                    "合同文件归档失败。时间={Time:yyyy-MM-dd HH:mm:ss}，供应商={Supplier}，合同编号={ContractNo}，原因={Error}。",
+                    DateTime.Now, supplier.Name, supplier.ContractNo, archived.Error);
+                await ShowErrorDialogAsync("保存失败", $"合同文件保存失败：{archived.Error}");
+                ContractFileStatusText.Text = string.Empty;
+                return;
             }
 
-            // 文件名带上供应商 Id，避免重名覆盖；保留原始扩展名
-            var safeName = string.IsNullOrWhiteSpace(supplier.Name)
-                ? $"supplier-{supplier.Id}"
-                : supplier.Name;
-            var destFileName = $"{supplier.Id}_{safeName}{Path.GetExtension(file.Name)}";
-            var destPath = Path.Combine(contractsDir, destFileName);
-
-            // 通过文件夹 API 复制（GetFileFromPathAsync 在目标文件不存在时会直接抛异常，不能用来做覆盖）
-            var folder = await StorageFolder.GetFolderFromPathAsync(contractsDir);
-            await file.CopyAsync(folder, destFileName, NameCollisionOption.ReplaceExisting);
-
-            // 存储相对路径，便于随数据目录一起迁移
-            var relative = Path.Combine(ContractsSubDir, destFileName);
-            supplier.ContractFilePath = relative;
+            // 存储绝对路径：归档根可在设置页修改，绝对路径不受数据目录变化影响
+            supplier.ContractFilePath = archived.Path;
             DatabaseService.Instance.UpdateSupplier(supplier);
 
             RefreshContractFilePanel();
-            ViewModel.StatusMessage = $"合同文件已上传：{destFileName}";
-            ContractFileStatusText.Text = $"已保存到数据目录，相对路径：{relative}";
+            ViewModel.StatusMessage = $"合同文件已上传：{Path.GetFileName(archived.Path)}";
+            ContractFileStatusText.Text = $"已保存到归档目录：{archived.Path}";
             logger.LogInformation(
                 "上传合同文件成功。时间={Time:yyyy-MM-dd HH:mm:ss}，供应商 Id={Id}，供应商={Supplier}，合同编号={ContractNo}，文件={File}。",
-                DateTime.Now, supplier.Id, supplier.Name, supplier.ContractNo, destFileName);
+                DateTime.Now, supplier.Id, supplier.Name, supplier.ContractNo, archived.Path);
         }
         catch (Exception ex)
         {

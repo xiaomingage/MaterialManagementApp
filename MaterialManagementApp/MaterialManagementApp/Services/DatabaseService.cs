@@ -243,6 +243,34 @@ CREATE TABLE IF NOT EXISTS DbVersion (
     Id INTEGER PRIMARY KEY,
     VersionNo INTEGER NOT NULL DEFAULT 0,
     UpdateTime TEXT NOT NULL DEFAULT '');
+
+CREATE TABLE IF NOT EXISTS SiteProgressDaily (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SiteName TEXT NOT NULL DEFAULT '',
+    Date TEXT NOT NULL DEFAULT '',
+    Category TEXT NOT NULL DEFAULT 'Unknown',
+    Lng REAL NOT NULL DEFAULT 0,
+    Lat REAL NOT NULL DEFAULT 0,
+    WgsLng REAL NOT NULL DEFAULT 0,
+    WgsLat REAL NOT NULL DEFAULT 0,
+    PhotoCount INTEGER NOT NULL DEFAULT 0,
+    FirstShotAt TEXT NOT NULL DEFAULT '',
+    LastShotAt TEXT NOT NULL DEFAULT '',
+    SourceFilePath TEXT NOT NULL DEFAULT '',
+    IsLocated INTEGER NOT NULL DEFAULT 1,
+    UpdatedAt TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Date ON SiteProgressDaily(Date);
+CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Site ON SiteProgressDaily(SiteName, Date);
+CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Location ON SiteProgressDaily(IsLocated, Date);
+
+-- 水印图片处理台账：记录已扫描文件的路径、大小与修改时间，用于启动时的增量扫描去重
+CREATE TABLE IF NOT EXISTS WatermarkScannedFile (
+    FilePath TEXT PRIMARY KEY,
+    FileSize INTEGER NOT NULL DEFAULT 0,
+    FileLastWriteTicks INTEGER NOT NULL DEFAULT 0,
+    Status TEXT NOT NULL DEFAULT '',
+    Message TEXT NOT NULL DEFAULT '',
+    ProcessedAt TEXT NOT NULL DEFAULT '');
 ";
 
     private static readonly Lazy<DatabaseService> _instance = new(() => new DatabaseService());
@@ -284,25 +312,15 @@ CREATE TABLE IF NOT EXISTS DbVersion (
     public string DatabasePath => _databasePath;
 
     /// <summary>
-    /// 台账扫描图片的存储目录：安装数据目录（安装向导选择的数据根目录；未安装时为程序目录\Data）
-    /// 下独立的 LedgerImages 文件夹。图片固定随软件安装目录走，不跟随数据库自定义路径，
-    /// 换机或迁移时把 Data 目录整体拷走图片不丢；历史记录中的旧路径仍按原样打开不受影响。
-    /// </summary>
-    public string LedgerImageDir
-    {
-        get
-        {
-            var dataRoot = AppPaths.DataRoot ?? AppPaths.ProgramDataDir;
-            return Path.Combine(dataRoot, "LedgerImages");
-        }
-    }
-
-    /// <summary>
-    /// 把地材单扫描图片复制到 <see cref="LedgerImageDir"/> 持久保存，返回复制后的完整路径。
-    /// 文件名加时间戳前缀避免重名覆盖；来源文件已在存储目录内时不重复复制。
+    /// 把地材单扫描图片归档到 Imports\单据\yyyyMMdd 持久保存，返回归档后的完整路径。
+    /// 文件名冲突时自动追加序号，绝不覆盖；归档失败抛出 <see cref="IOException"/>，
+    /// 由调用方提示失败原因，不降级写到其他目录。
+    /// 历史记录中的旧路径仍按原样打开不受影响。
     /// </summary>
     /// <param name="sourcePath">扫描图片当前的完整路径（临时目录、用户相册均可）。</param>
-    /// <returns>存储目录内的图片完整路径；目录不可写等 IO 异常由调用方捕获提示。</returns>
+    /// <returns>归档目录内的图片完整路径。</returns>
+    /// <exception cref="FileNotFoundException">源图片不存在时抛出。</exception>
+    /// <exception cref="IOException">归档目录不可写或复制失败时抛出。</exception>
     public string SaveLedgerImage(string sourcePath)
     {
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
@@ -310,19 +328,13 @@ CREATE TABLE IF NOT EXISTS DbVersion (
             throw new FileNotFoundException("扫描图片不存在，无法保存。", sourcePath);
         }
 
-        var dir = LedgerImageDir;
-        Directory.CreateDirectory(dir);
-
-        var full = Path.GetFullPath(sourcePath);
-        if (string.Equals(Path.GetDirectoryName(full), dir, StringComparison.OrdinalIgnoreCase))
+        var result = FileStorageService.Instance.StoreImport(FileStorageService.ReceiptCategory, sourcePath);
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Path))
         {
-            // 已在存储目录内（如同一张图重复保存），直接沿用不再复制
-            return full;
+            throw new IOException(result.Error ?? "扫描图片归档失败。");
         }
 
-        var destination = Path.Combine(dir, $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Path.GetFileName(sourcePath)}");
-        File.Copy(full, destination, overwrite: false);
-        return destination;
+        return result.Path;
     }
 
     /// <summary>
@@ -632,6 +644,274 @@ CREATE TABLE IF NOT EXISTS DbVersion (
         alterCommand.CommandText = "ALTER TABLE Supplier ADD COLUMN ContractFilePath TEXT NOT NULL DEFAULT '';";
         alterCommand.ExecuteNonQuery();
         Logger.LogInformation("已为 Supplier 表补齐 ContractFilePath 列。");
+    }
+
+    // ==================== 施工进度（水印图片扫描） ====================
+
+    /// <summary>
+    /// 查询「工点 + 日期 + 类别」的已定位汇总行，供扫描入库时累加照片数量。
+    /// </summary>
+    /// <param name="siteName">工点名。</param>
+    /// <param name="date">日期（yyyy-MM-dd）。</param>
+    /// <param name="category">类别存储值（枚举名）。</param>
+    /// <returns>匹配的汇总行；不存在时返回 null。</returns>
+    public SiteProgressDaily? FindSiteProgressAggregate(string siteName, string date, string category)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT * FROM SiteProgressDaily WHERE IsLocated = 1 AND SiteName = @site AND \"Date\" = @date AND Category = @category LIMIT 1;";
+        command.Parameters.AddWithValue("@site", siteName);
+        command.Parameters.AddWithValue("@date", date);
+        command.Parameters.AddWithValue("@category", category);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadSiteProgress(reader) : null;
+    }
+
+    /// <summary>按来源文件查询「待定位」记录，避免同一张无坐标照片被重复插入。</summary>
+    /// <param name="filePath">图片完整路径。</param>
+    /// <returns>匹配的待定位记录；不存在时返回 null。</returns>
+    public SiteProgressDaily? FindUnlocatedSiteProgressByFile(string filePath)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT * FROM SiteProgressDaily WHERE IsLocated = 0 AND SourceFilePath = @file LIMIT 1;";
+        command.Parameters.AddWithValue("@file", filePath);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadSiteProgress(reader) : null;
+    }
+
+    /// <summary>插入一条施工进度汇总行。</summary>
+    /// <param name="row">待插入记录（Id 由数据库生成）。</param>
+    /// <returns>新记录的主键 Id；获取失败时返回 0。</returns>
+    public int InsertSiteProgress(SiteProgressDaily row)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO SiteProgressDaily
+                (SiteName, "Date", Category, Lng, Lat, WgsLng, WgsLat, PhotoCount,
+                 FirstShotAt, LastShotAt, SourceFilePath, IsLocated, UpdatedAt)
+            VALUES
+                (@site, @date, @category, @lng, @lat, @wgsLng, @wgsLat, @photoCount,
+                 @firstShotAt, @lastShotAt, @sourceFile, @isLocated, @updatedAt);
+            SELECT last_insert_rowid();
+            """;
+        command.Parameters.AddWithValue("@site", row.SiteName);
+        command.Parameters.AddWithValue("@date", row.Date);
+        command.Parameters.AddWithValue("@category", row.Category.ToString());
+        command.Parameters.AddWithValue("@lng", row.Lng);
+        command.Parameters.AddWithValue("@lat", row.Lat);
+        command.Parameters.AddWithValue("@wgsLng", row.WgsLng);
+        command.Parameters.AddWithValue("@wgsLat", row.WgsLat);
+        command.Parameters.AddWithValue("@photoCount", row.PhotoCount);
+        command.Parameters.AddWithValue("@firstShotAt", row.FirstShotAt);
+        command.Parameters.AddWithValue("@lastShotAt", row.LastShotAt);
+        command.Parameters.AddWithValue("@sourceFile", row.SourceFilePath);
+        command.Parameters.AddWithValue("@isLocated", row.IsLocated ? 1 : 0);
+        command.Parameters.AddWithValue(
+            "@updatedAt",
+            string.IsNullOrWhiteSpace(row.UpdatedAt) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : row.UpdatedAt);
+
+        var result = command.ExecuteScalar();
+        return result is long id ? (int)id : 0;
+    }
+
+    /// <summary>更新已定位汇总行的照片数量与首末拍摄时间（同一工点同一天多次导入时累加）。</summary>
+    /// <param name="id">汇总行主键。</param>
+    /// <param name="photoCount">累加后的照片张数。</param>
+    /// <param name="firstShotAt">最早拍摄时间。</param>
+    /// <param name="lastShotAt">最晚拍摄时间。</param>
+    /// <param name="sourceFilePath">最近一次来源图片路径。</param>
+    public void UpdateSiteProgressAggregate(int id, int photoCount, string firstShotAt, string lastShotAt, string sourceFilePath)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE SiteProgressDaily
+            SET PhotoCount = @photoCount,
+                FirstShotAt = @firstShotAt,
+                LastShotAt = @lastShotAt,
+                SourceFilePath = @sourceFile,
+                UpdatedAt = @updatedAt
+            WHERE Id = @id;
+            """;
+        command.Parameters.AddWithValue("@photoCount", photoCount);
+        command.Parameters.AddWithValue("@firstShotAt", firstShotAt);
+        command.Parameters.AddWithValue("@lastShotAt", lastShotAt);
+        command.Parameters.AddWithValue("@sourceFile", sourceFilePath);
+        command.Parameters.AddWithValue("@updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.Parameters.AddWithValue("@id", id);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>查询指定日期的全部施工进度行（含待定位），供首页「今日施工记录」展示。</summary>
+    /// <param name="date">日期（yyyy-MM-dd）。</param>
+    /// <returns>当天的进度行列表。</returns>
+    public List<SiteProgressDaily> GetSiteProgressForDate(string date)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT * FROM SiteProgressDaily WHERE \"Date\" = @date ORDER BY IsLocated DESC, LastShotAt DESC;";
+        command.Parameters.AddWithValue("@date", date);
+
+        var results = new List<SiteProgressDaily>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(ReadSiteProgress(reader));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// 查询每个「工点 + 类别」的最新一条已定位记录，用于地图气泡的状态判定
+    /// （不限制时间范围，保证长期停工的工点仍以红色气泡留在图上）。
+    /// </summary>
+    /// <returns>最新记录列表。</returns>
+    public List<SiteProgressDaily> GetLatestSiteProgress()
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT s.* FROM SiteProgressDaily s
+            INNER JOIN (
+                SELECT SiteName, Category, MAX("Date") AS MaxDate
+                FROM SiteProgressDaily
+                WHERE IsLocated = 1
+                GROUP BY SiteName, Category
+            ) m ON s.SiteName = m.SiteName AND s.Category = m.Category AND s."Date" = m.MaxDate
+            WHERE s.IsLocated = 1;
+            """;
+
+        var results = new List<SiteProgressDaily>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(ReadSiteProgress(reader));
+        }
+
+        return results;
+    }
+
+    /// <summary>查询已知工点及其最近一次有效坐标，用于无工点名时按「坐标附近最近工点」归并。</summary>
+    /// <returns>工点名称与非零坐标列表。</returns>
+    public List<SiteProgressDaily> GetKnownSiteLocations()
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT * FROM SiteProgressDaily
+            WHERE IsLocated = 1 AND (Lng <> 0 OR Lat <> 0)
+              AND Id IN (SELECT MAX(Id) FROM SiteProgressDaily WHERE IsLocated = 1 GROUP BY SiteName);
+            """;
+
+        var results = new List<SiteProgressDaily>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(ReadSiteProgress(reader));
+        }
+
+        return results;
+    }
+
+    /// <summary>统计待定位池的照片条数（未提取到经纬度、已保留但未上图的记录）。</summary>
+    /// <returns>待定位记录数。</returns>
+    public int CountPendingLocationProgress() =>
+        (int)ExecuteScalarCount("SELECT COUNT(*) FROM SiteProgressDaily WHERE IsLocated = 0;");
+
+    /// <summary>
+    /// 判断水印图片是否已处理：路径、文件大小与最后修改时间一致且处理成功才视为已处理。
+    /// 失败文件在下次启动时会重新尝试识别，避免一次临时故障让照片永久漏扫。
+    /// </summary>
+    /// <param name="filePath">图片完整路径。</param>
+    /// <param name="fileSize">文件字节数。</param>
+    /// <param name="lastWriteTicks">最后修改时间的 Ticks。</param>
+    /// <returns>已成功处理返回 true。</returns>
+    public bool IsWatermarkFileProcessed(string filePath, long fileSize, long lastWriteTicks)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT FileSize, FileLastWriteTicks, Status FROM WatermarkScannedFile WHERE FilePath = @path LIMIT 1;";
+        command.Parameters.AddWithValue("@path", filePath);
+
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return false;
+        }
+
+        var status = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+        return reader.GetInt64(0) == fileSize
+               && reader.GetInt64(1) == lastWriteTicks
+               && string.Equals(status, "Processed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>记录水印图片的处理结果（成功或失败），作为增量扫描的去重依据。</summary>
+    /// <param name="filePath">图片完整路径。</param>
+    /// <param name="fileSize">文件字节数。</param>
+    /// <param name="lastWriteTicks">最后修改时间的 Ticks。</param>
+    /// <param name="status">处理状态：Processed / Failed。</param>
+    /// <param name="message">失败原因或补充说明。</param>
+    public void SaveWatermarkFileState(
+        string filePath, long fileSize, long lastWriteTicks, string status, string message)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT OR REPLACE INTO WatermarkScannedFile
+                (FilePath, FileSize, FileLastWriteTicks, Status, Message, ProcessedAt)
+            VALUES (@path, @size, @ticks, @status, @message, @processedAt);
+            """;
+        command.Parameters.AddWithValue("@path", filePath);
+        command.Parameters.AddWithValue("@size", fileSize);
+        command.Parameters.AddWithValue("@ticks", lastWriteTicks);
+        command.Parameters.AddWithValue("@status", status);
+        command.Parameters.AddWithValue("@message", message ?? string.Empty);
+        command.Parameters.AddWithValue("@processedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>把一行 SiteProgressDaily 查询结果映射为实体（类别列存枚举名，非数值）。</summary>
+    /// <param name="reader">已定位到数据行的读取器。</param>
+    /// <returns>实体对象。</returns>
+    private static SiteProgressDaily ReadSiteProgress(SqliteDataReader reader)
+    {
+        var categoryText = reader.IsDBNull(reader.GetOrdinal("Category"))
+            ? string.Empty
+            : reader.GetString(reader.GetOrdinal("Category"));
+
+        return new SiteProgressDaily
+        {
+            Id = reader.GetInt32(reader.GetOrdinal("Id")),
+            SiteName = reader.IsDBNull(reader.GetOrdinal("SiteName")) ? string.Empty : reader.GetString(reader.GetOrdinal("SiteName")),
+            Date = reader.IsDBNull(reader.GetOrdinal("Date")) ? string.Empty : reader.GetString(reader.GetOrdinal("Date")),
+            Category = Enum.TryParse<SiteProgressCategory>(categoryText, true, out var category)
+                ? category
+                : SiteProgressCategory.Unknown,
+            Lng = reader.GetDouble(reader.GetOrdinal("Lng")),
+            Lat = reader.GetDouble(reader.GetOrdinal("Lat")),
+            WgsLng = reader.GetDouble(reader.GetOrdinal("WgsLng")),
+            WgsLat = reader.GetDouble(reader.GetOrdinal("WgsLat")),
+            PhotoCount = reader.GetInt32(reader.GetOrdinal("PhotoCount")),
+            FirstShotAt = reader.IsDBNull(reader.GetOrdinal("FirstShotAt")) ? string.Empty : reader.GetString(reader.GetOrdinal("FirstShotAt")),
+            LastShotAt = reader.IsDBNull(reader.GetOrdinal("LastShotAt")) ? string.Empty : reader.GetString(reader.GetOrdinal("LastShotAt")),
+            SourceFilePath = reader.IsDBNull(reader.GetOrdinal("SourceFilePath")) ? string.Empty : reader.GetString(reader.GetOrdinal("SourceFilePath")),
+            IsLocated = reader.GetInt64(reader.GetOrdinal("IsLocated")) != 0,
+            UpdatedAt = reader.IsDBNull(reader.GetOrdinal("UpdatedAt")) ? string.Empty : reader.GetString(reader.GetOrdinal("UpdatedAt"))
+        };
     }
 
     /// <summary>

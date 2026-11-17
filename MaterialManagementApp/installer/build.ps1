@@ -27,20 +27,27 @@ $isccCandidates = @(
 )
 $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-if (-not $SkipPublish) {
-    Write-Host '[1/3] Cleaning stale obj/ and NuGet lock files...' -ForegroundColor Cyan
-    # Remove partial downloads left by an interrupted restore
-    Get-ChildItem (Join-Path $env:USERPROFILE '.nuget\packages') -Recurse -Include '*.eok','*.pyt','*.3sc','*.tmp' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    Get-ChildItem $solutionDir -Recurse -Directory -Filter 'obj' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host '      Done.' -ForegroundColor DarkGray
-
-    Write-Host '[2/3] Restoring and publishing Release self-contained (win-x64)...' -ForegroundColor Cyan
+function Invoke-DotnetPublish {
     # 用管道 Out-Host 把 dotnet 的输出消费掉，避免 PowerShell 把工具输出当错误处理；
     # 同时 Start-Process 隔离反而会让后续 Get-Item / Split-Path 属性读取偶发返回 null
     dotnet restore $project --nologo | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { return $false }
     dotnet publish $project -c Release -r win-x64 -p:Platform=x64 --self-contained true -v:m | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+    return ($LASTEXITCODE -eq 0)
+}
+
+if (-not $SkipPublish) {
+    Write-Host '[1/3] Restoring and publishing Release self-contained (win-x64)...' -ForegroundColor Cyan
+    $ok = Invoke-DotnetPublish
+    if (-not $ok) {
+        # 仅在 restore/publish 真的失败时才清缓存重试：无条件删除 obj/ 会让 IDE（OmniSharp、
+        # Visual Studio）丢失 XAML 生成代码与 NuGet 资产，导致编辑器满屏假红线
+        Write-Host '      Restore/publish failed, cleaning obj/ and NuGet lock files, retrying once...' -ForegroundColor Yellow
+        Get-ChildItem (Join-Path $env:USERPROFILE '.nuget\packages') -Recurse -Include '*.eok','*.pyt','*.3sc','*.tmp' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Get-ChildItem $solutionDir -Recurse -Directory -Filter 'obj' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        $ok = Invoke-DotnetPublish
+        if (-not $ok) { throw 'dotnet restore/publish failed even after cleaning obj/ and NuGet cache, aborting.' }
+    }
 
     # publish 产物路径
     $projInfo = Get-Item $project

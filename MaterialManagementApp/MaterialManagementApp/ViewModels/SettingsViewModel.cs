@@ -17,6 +17,7 @@ using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Windows.Storage.Pickers;
 
 namespace MaterialManagementApp.ViewModels;
@@ -246,9 +247,33 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _accentColor;
 
-    /// <summary>数据库文件完整路径（只读展示）。</summary>
+    /// <summary>数据库文件完整路径（只读展示，本轮不提供修改入口）。</summary>
     [ObservableProperty]
     private string _databasePath;
+
+    /// <summary>数据库位置模式说明：安装版 / 便携版，明确本页只读、不提供搬家入口。</summary>
+    public string DatabaseModeText => AppPaths.DataRoot is not null
+        ? "安装版：数据库固定使用安装时选择的数据根目录，随数据目录整体备份；本页只读展示，不能修改位置。"
+        : "便携版：数据库固定在程序目录的 Data 文件夹，移动软件目录即可整体搬走；本页只读展示，不能修改位置。";
+
+    /// <summary>文件归档根目录输入值；留空表示沿用默认解析。</summary>
+    [ObservableProperty]
+    private string _archiveRootPath = string.Empty;
+
+    /// <summary>归档根输入框占位提示：显示留空时的默认位置。</summary>
+    public string DefaultArchiveRootHint => $"留空使用默认：{AppPaths.DefaultArchiveRoot}";
+
+    /// <summary>实时预览的 Imports 路径。</summary>
+    [ObservableProperty]
+    private string _archiveImportsPreview = string.Empty;
+
+    /// <summary>实时预览的 Exports 路径。</summary>
+    [ObservableProperty]
+    private string _archiveExportsPreview = string.Empty;
+
+    /// <summary>当前日志目录（只读展示，供「打开日志目录」使用）。</summary>
+    [ObservableProperty]
+    private string _logsDirectory = string.Empty;
 
     /// <summary>配置文件完整路径（只读展示）。</summary>
     [ObservableProperty]
@@ -317,6 +342,18 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private int _backupRetentionCount;
 
+    /// <summary>水印图片根目录（「今日水印相机」照片的固定存放文件夹）。</summary>
+    [ObservableProperty]
+    private string _watermarkRootPath = string.Empty;
+
+    /// <summary>高德地图 JS API Key（工作台施工进度地图使用）。</summary>
+    [ObservableProperty]
+    private string _amapJsApiKey = string.Empty;
+
+    /// <summary>高德地图 JS API 安全密钥（可选，2021 年后申请的 Key 需配合使用）。</summary>
+    [ObservableProperty]
+    private string _amapSecurityCode = string.Empty;
+
     /// <summary>数据库备份板块的独立提示文本（手动备份/恢复结果），与全局 StatusMessage 分开避免互相覆盖。</summary>
     [ObservableProperty]
     private string _backupStatus = string.Empty;
@@ -361,6 +398,12 @@ public partial class SettingsViewModel : ObservableObject
             AiStatus = BuildAiStatusText(settings);
 
             BackupRetentionCount = settings.BackupRetentionCount;
+            WatermarkRootPath = settings.WatermarkRootPath ?? string.Empty;
+            AmapJsApiKey = settings.AmapJsApiKey ?? string.Empty;
+            AmapSecurityCode = settings.AmapSecurityCode ?? string.Empty;
+            ArchiveRootPath = settings.ArchiveRootPath ?? string.Empty;
+            LogsDirectory = AppLog.LogsDirectory;
+            RefreshArchivePreviews();
 
             LoadDimensionData();
 
@@ -380,7 +423,7 @@ public partial class SettingsViewModel : ObservableObject
 
     /// <summary>保存配置：写入 JSON、立即应用主题并提示结果。</summary>
     [RelayCommand]
-    private void Save()
+    private async Task SaveAsync()
     {
         // 阈值参与库存预警查询，0 或负数会让「低于阈值」恒真，必须拦截
         if (LowStockThreshold <= 0 || LowStockThreshold > 9999)
@@ -389,9 +432,19 @@ public partial class SettingsViewModel : ObservableObject
             return;
         }
 
+        // 归档根可写性检测：失败直接拒绝保存，不允许带着不可写路径落盘
+        var archiveRoot = (ArchiveRootPath ?? string.Empty).Trim();
+        if (archiveRoot.Length > 0 && !FileStorageService.TryEnsureWritable(archiveRoot, out var archiveError))
+        {
+            StatusMessage = $"归档根目录不可写，已取消保存：{archiveError}";
+            return;
+        }
+
         try
         {
             var settings = SettingsService.Instance.Settings;
+            var previousWatermarkRoot = (settings.WatermarkRootPath ?? string.Empty).Trim();
+            var previousArchiveRoot = (settings.ArchiveRootPath ?? string.Empty).Trim();
 
             settings.LowStockThreshold = LowStockThreshold;
             settings.ProjectName = (ProjectName ?? string.Empty).Trim();
@@ -420,16 +473,56 @@ public partial class SettingsViewModel : ObservableObject
             settings.AiModelName = (AiModelName ?? string.Empty).Trim();
 
             settings.BackupRetentionCount = Math.Max(1, BackupRetentionCount);
+            settings.WatermarkRootPath = (WatermarkRootPath ?? string.Empty).Trim();
+            settings.AmapJsApiKey = (AmapJsApiKey ?? string.Empty).Trim();
+            settings.AmapSecurityCode = (AmapSecurityCode ?? string.Empty).Trim();
+            settings.ArchiveRootPath = archiveRoot;
 
             SettingsService.Instance.Save();
+
+            // 归档根改动后立即生效：确保新目录结构就绪，并记录生效路径
+            var archiveRootChanged = !string.Equals(previousArchiveRoot, archiveRoot, StringComparison.OrdinalIgnoreCase);
+            if (archiveRootChanged)
+            {
+                FileStorageService.Instance.EnsureCreated();
+                _logger.LogInformation("文件归档根目录已切换：{Root}。", FileStorageService.Instance.CurrentArchiveRoot);
+            }
+
+            // 根目录变更才重启监听，避免只改主题等设置时反复中断后台扫描
+            if (!string.Equals(previousWatermarkRoot, settings.WatermarkRootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    WatermarkScannerService.Instance.Restart();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "按新水印目录重启扫描失败。");
+                }
+            }
 
             // 主题必须立刻反映到界面，否则用户要重启才能看到效果
             ApplyTheme(settings.ThemeMode);
 
             AiStatus = BuildAiStatusText(settings);
 
-            StatusMessage = "设置已保存。";
-            _logger.LogInformation("应用设置已保存。");
+            if (archiveRootChanged)
+            {
+                StatusMessage = $"设置已保存，文件归档根目录已切换并立即生效：{FileStorageService.Instance.CurrentArchiveRoot}";
+                _logger.LogInformation(
+                    "应用设置已保存，归档根目录={Root}（不迁移已有文件）。",
+                    FileStorageService.Instance.CurrentArchiveRoot);
+                await PromptOpenArchiveRootAsync();
+            }
+            else
+            {
+                // 不强制阻止保存：用户可能先留空、稍后再补；只用提示说明地图暂不可用
+                StatusMessage = string.IsNullOrWhiteSpace(settings.AmapJsApiKey)
+                                || string.IsNullOrWhiteSpace(settings.AmapSecurityCode)
+                    ? "设置已保存。高德 JS API Key 或安全密钥为空，工作台地图暂时无法加载。"
+                    : "设置已保存，工作台地图将按新配置加载。";
+                _logger.LogInformation("应用设置已保存，归档根目录={Root}。", FileStorageService.Instance.CurrentArchiveRoot);
+            }
         }
         catch (Exception ex)
         {
@@ -492,6 +585,17 @@ public partial class SettingsViewModel : ObservableObject
             Load();
             ApplyTheme(SettingsService.Instance.Settings.ThemeMode);
             ThemeHelper.ApplyAccentColor(SettingsService.Instance.Settings.AccentColor);
+
+            // 恢复默认后根目录被清空，停止后台扫描
+            try
+            {
+                WatermarkScannerService.Instance.Restart();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "恢复默认设置后重启水印扫描失败。");
+            }
+
             StatusMessage = "已恢复默认设置。";
         }
         catch (Exception ex)
@@ -596,6 +700,139 @@ public partial class SettingsViewModel : ObservableObject
             _logger.LogError(ex, "恢复默认配置文件位置失败。");
             StatusMessage = $"恢复默认失败：{ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// 选择水印图片根目录：「今日水印相机」照片的固定存放文件夹（可含日期子文件夹）。
+    /// 选中后仅更新表单，点击「保存」才落盘并重启扫描。
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseWatermarkFolderAsync()
+    {
+        var picker = new FolderPicker
+        {
+            SuggestedStartLocation = PickerLocationId.PicturesLibrary
+        };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow!));
+
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null)
+        {
+            return;
+        }
+
+        WatermarkRootPath = folder.Path;
+        StatusMessage = "已选择水印图片根目录，点击「保存」后生效。";
+    }
+
+    /// <summary>清除水印图片根目录：保存后停止后台扫描，不影响已入库的历史记录。</summary>
+    [RelayCommand]
+    private void ClearWatermarkFolder()
+    {
+        WatermarkRootPath = string.Empty;
+        StatusMessage = "已清除水印图片根目录，点击「保存」后生效。";
+    }
+
+    /// <summary>浏览选择文件归档根目录；仅更新表单，点击「保存」才落盘并立即生效。</summary>
+    [RelayCommand]
+    private async Task BrowseArchiveRootFolderAsync()
+    {
+        var picker = new FolderPicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+        };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow!));
+
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null)
+        {
+            return;
+        }
+
+        ArchiveRootPath = folder.Path;
+        StatusMessage = "已选择文件归档根目录，点击「保存」后生效（不迁移已有文件）。";
+    }
+
+    /// <summary>打开当前生效的归档根目录（不存在时先创建）。</summary>
+    [RelayCommand]
+    private void OpenArchiveRootFolder()
+    {
+        try
+        {
+            var root = FileStorageService.Instance.CurrentArchiveRoot;
+            Directory.CreateDirectory(root);
+            OpenFolder(root);
+            StatusMessage = $"已打开归档根目录：{root}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"打开归档目录失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>打开日志目录（Serilog 双文件输出位置，本轮不改变）。</summary>
+    [RelayCommand]
+    private void OpenLogsFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(AppLog.LogsDirectory);
+            OpenFolder(AppLog.LogsDirectory);
+            StatusMessage = $"已打开日志目录：{AppLog.LogsDirectory}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"打开日志目录失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>归档根输入变化时实时刷新 Imports / Exports 预览。</summary>
+    partial void OnArchiveRootPathChanged(string value) => RefreshArchivePreviews();
+
+    /// <summary>按当前输入值刷新导入/导出路径预览（不做磁盘写入）。</summary>
+    private void RefreshArchivePreviews()
+    {
+        FileStorageService.PreviewLayout(ArchiveRootPath, out _, out var imports, out var exports);
+        ArchiveImportsPreview = $"导入文件：{imports}";
+        ArchiveExportsPreview = $"导出文件：{exports}";
+    }
+
+    /// <summary>
+    /// 归档根保存成功后的提示：明确不迁移已有文件，并询问是否打开新位置。
+    /// </summary>
+    private static async Task PromptOpenArchiveRootAsync()
+    {
+        var root = FileStorageService.Instance.CurrentArchiveRoot;
+        var xamlRoot = App.MainWindow?.Content?.XamlRoot;
+        if (xamlRoot is null)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = xamlRoot,
+            Title = "归档目录已切换",
+            Content = $"新文件将保存到：{root}\n\n已有文件不会自动迁移。是否立即打开新位置？",
+            PrimaryButtonText = "打开新位置",
+            CloseButtonText = "稍后",
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            OpenFolder(root);
+        }
+    }
+
+    /// <summary>用资源管理器打开目录。</summary>
+    private static void OpenFolder(string directory)
+    {
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{directory}\"") { UseShellExecute = true });
     }
 
     /// <summary>统一文件选择器入口：按扩展名过滤的弹窗，取消时返回 null。</summary>

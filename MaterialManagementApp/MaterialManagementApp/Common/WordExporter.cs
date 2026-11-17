@@ -6,24 +6,24 @@ using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using Windows.Storage.Pickers;
+using MaterialManagementApp.Services;
 
 namespace MaterialManagementApp.Common;
 
 /// <summary>
-/// 基于模板 docx 的 Word 导出引擎：把模板整份读入内存后原地填充，再写入用户选择的位置，
+/// 基于模板 docx 的 Word 导出引擎：把模板整份读入内存后原地填充，再写入归档导出目录，
 /// 从而最大限度保留模板的合并单元格、字体与版式。
 /// </summary>
 public static class WordExporter
 {
-    /// <summary>以模板为基底填充并保存 Word 文档。</summary>
+    /// <summary>以模板为基底填充并写入归档导出目录（Exports\Word\yyyyMMdd）。</summary>
     /// <param name="templatePath">模板 docx 的绝对路径，通常来自 <see cref="TemplatePaths"/>。</param>
-    /// <param name="suggestedFileName">保存对话框中的建议文件名（不含扩展名）。</param>
+    /// <param name="suggestedFileName">建议文件名（不含扩展名）。</param>
     /// <param name="fill">填充委托，参数为内存中已打开的 Word 文档。</param>
-    /// <returns>保存成功返回 true；用户取消或无法获取窗口句柄时返回 false。</returns>
+    /// <returns>保存成功返回 true。</returns>
     /// <exception cref="FileNotFoundException">模板文件不存在时抛出。</exception>
-    /// <exception cref="IOException">目标文件被占用或无写入权限时抛出，由调用方提示。</exception>
-    public static async Task<bool> SaveFromTemplateAsync(
+    /// <exception cref="IOException">归档目录不可写或文件被占用时抛出，由调用方提示。</exception>
+    public static Task<bool> SaveFromTemplateAsync(
         string templatePath,
         string suggestedFileName,
         Action<WordprocessingDocument> fill)
@@ -31,48 +31,32 @@ public static class WordExporter
         ArgumentNullException.ThrowIfNull(fill);
         TemplatePaths.EnsureExists(templatePath);
 
-        var window = App.MainWindow;
-        if (window is null)
+        var result = FileStorageService.Instance.StoreExport(
+            FileStorageService.WordCategory,
+            $"{suggestedFileName}.docx",
+            target =>
+            {
+                // 以模板副本为基底填充，绝不直接修改用户提供的模板文件
+                using var buffer = new MemoryStream(File.ReadAllBytes(templatePath));
+
+                using (var document = WordprocessingDocument.Open(buffer, true))
+                {
+                    fill(document);
+
+                    // 关闭前必须显式保存主文档部件，否则改动只停留在内存对象上
+                    document.MainDocumentPart?.Document.Save();
+                }
+
+                buffer.Position = 0;
+                buffer.CopyTo(target);
+            });
+
+        if (!result.Success)
         {
-            return false;
+            throw new IOException(result.Error);
         }
 
-        var picker = new FileSavePicker
-        {
-            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
-            SuggestedFileName = suggestedFileName
-        };
-        picker.FileTypeChoices.Add("Word 文档", new List<string> { ".docx" });
-
-        // WinUI 3 的保存对话框是 Win32 对话框，必须先绑定窗口句柄，否则构造后直接抛异常
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-
-        var file = await picker.PickSaveFileAsync();
-        if (file is null)
-        {
-            return false;
-        }
-
-        // 以模板副本为基底填充，绝不直接修改用户提供的模板文件
-        using var buffer = new MemoryStream(File.ReadAllBytes(templatePath));
-
-        using (var document = WordprocessingDocument.Open(buffer, true))
-        {
-            fill(document);
-
-            // 关闭前必须显式保存主文档部件，否则改动只停留在内存对象上
-            document.MainDocumentPart?.Document.Save();
-        }
-
-        buffer.Position = 0;
-        using var target = await file.OpenStreamForWriteAsync();
-
-        // 覆盖同名文件时清空旧字节，避免新文档比旧文档短导致尾部残留
-        target.SetLength(0);
-        buffer.CopyTo(target);
-        await target.FlushAsync();
-        return true;
+        return Task.FromResult(true);
     }
 
     /// <summary>获取文档正文中的第一个表格。</summary>

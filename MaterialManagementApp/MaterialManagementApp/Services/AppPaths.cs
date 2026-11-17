@@ -43,6 +43,83 @@ public static class AppPaths
     /// <summary>数据库备份目录：%LOCALAPPDATA%\MaterialSystem\Backup。</summary>
     public static string BackupDir => Path.Combine(LocalAppDataRoot, "Backup");
 
+    /// <summary>
+    /// 默认归档根目录：安装版取安装向导选择的 <see cref="DataRoot"/>，
+    /// 便携版取程序目录下的 <see cref="ProgramDataDir"/>，与数据库现有解析顺序一致。
+    /// 用户可在设置页覆盖（AppSettings.ArchiveRootPath），覆盖后以设置为准。
+    /// </summary>
+    public static string DefaultArchiveRoot => DataRoot ?? ProgramDataDir;
+
+    /// <summary>归档根不可写时的回退目录：%LOCALAPPDATA%\MaterialSystem\Storage。</summary>
+    public static string StorageFallbackRoot => Path.Combine(LocalAppDataRoot, "Storage");
+
+    /// <summary>归档根下的导入目录：&lt;归档根&gt;\Imports。</summary>
+    /// <param name="archiveRoot">归档根目录绝对路径。</param>
+    public static string ImportsDir(string archiveRoot) => Path.Combine(archiveRoot, "Imports");
+
+    /// <summary>归档根下的导出目录：&lt;归档根&gt;\Exports。</summary>
+    /// <param name="archiveRoot">归档根目录绝对路径。</param>
+    public static string ExportsDir(string archiveRoot) => Path.Combine(archiveRoot, "Exports");
+
+    /// <summary>归档根下的扫描照片目录：&lt;归档根&gt;\ScanPhotos（本轮只创建，不启用）。</summary>
+    /// <param name="archiveRoot">归档根目录绝对路径。</param>
+    public static string ScanPhotosDir(string archiveRoot) => Path.Combine(archiveRoot, "ScanPhotos");
+
+    /// <summary>某类导入文件的日期目录：Imports\&lt;类别&gt;\yyyyMMdd。</summary>
+    /// <param name="archiveRoot">归档根目录绝对路径。</param>
+    /// <param name="category">文件类别（如 合同 / 单据）。</param>
+    /// <param name="date">归档日期。</param>
+    public static string ImportDateDir(string archiveRoot, string category, DateTime date) =>
+        Path.Combine(ImportsDir(archiveRoot), category, date.ToString("yyyyMMdd"));
+
+    /// <summary>某类导出文件的日期目录：Exports\&lt;类别&gt;\yyyyMMdd。</summary>
+    /// <param name="archiveRoot">归档根目录绝对路径。</param>
+    /// <param name="category">文件类别（如 Excel / Word）。</param>
+    /// <param name="date">归档日期。</param>
+    public static string ExportDateDir(string archiveRoot, string category, DateTime date) =>
+        Path.Combine(ExportsDir(archiveRoot), category, date.ToString("yyyyMMdd"));
+
+    /// <summary>OCR 缓存目录：%LOCALAPPDATA%\MaterialSystem\OcrCache。</summary>
+    public static string OcrCacheDir => Path.Combine(LocalAppDataRoot, "OcrCache");
+
+    /// <summary>通用临时目录：%LOCALAPPDATA%\MaterialSystem\Temp。</summary>
+    public static string TempDir => Path.Combine(LocalAppDataRoot, "Temp");
+
+    /// <summary>
+    /// 创建归档结构与本机缓存目录（只建空目录，不清空已有内容）：
+    /// Imports / Exports / ScanPhotos 位于归档根，OcrCache / Temp 位于本机应用数据根。
+    /// 单个目录创建失败不抛出：调用方继续尝试其余目录，失败原因由上层日志记录。
+    /// </summary>
+    /// <param name="archiveRoot">当前生效的归档根目录绝对路径。</param>
+    /// <returns>全部创建成功返回 true；任一目录失败返回 false。</returns>
+    public static bool TryEnsureCreated(string archiveRoot)
+    {
+        var directories = new[]
+        {
+            ImportsDir(archiveRoot),
+            ExportsDir(archiveRoot),
+            ScanPhotosDir(archiveRoot),
+            OcrCacheDir,
+            TempDir
+        };
+
+        var allCreated = true;
+        foreach (var directory in directories)
+        {
+            try
+            {
+                Directory.CreateDirectory(directory);
+            }
+            catch (Exception ex)
+            {
+                allCreated = false;
+                System.Diagnostics.Debug.WriteLine($"[AppPaths] 创建目录失败：{directory}，{ex.Message}");
+            }
+        }
+
+        return allCreated;
+    }
+
     static AppPaths()
     {
         DataRoot = ReadDataRoot();

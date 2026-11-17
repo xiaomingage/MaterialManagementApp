@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>施工进度地图</title>
+    <style>
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #f3f4f6;
+            font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+            overflow: hidden;
+        }
+
+        /* 常显气泡：白底 + 左侧状态色边 + 底部小三角指向坐标点 */
+        .bubble {
+            position: relative;
+            min-width: 140px;
+            max-width: 230px;
+            padding: 8px 12px 9px;
+            background: #ffffff;
+            border: 1px solid rgba(15, 23, 42, .10);
+            border-left: 3px solid var(--status, #10B981);
+            border-radius: 8px;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, .22);
+            font-size: 12px;
+            line-height: 1.45;
+            color: #0f172a;
+            white-space: nowrap;
+            user-select: none;
+            cursor: default;
+        }
+
+        .bubble-name {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 3px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .bubble-progress {
+            color: #334155;
+        }
+
+        .bubble-status {
+            margin-top: 4px;
+            font-weight: 600;
+            color: var(--status, #10B981);
+        }
+
+        .bubble-tail {
+            position: absolute;
+            left: 50%;
+            bottom: -7px;
+            width: 12px;
+            height: 12px;
+            margin-left: -6px;
+            background: #ffffff;
+            border-right: 1px solid rgba(15, 23, 42, .10);
+            border-bottom: 1px solid rgba(15, 23, 42, .10);
+            transform: rotate(45deg);
+        }
+
+        .hint {
+            position: absolute;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 80%;
+            padding: 10px 16px;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, .82);
+            color: #f8fafc;
+            font-size: 12px;
+            line-height: 1.6;
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .hint.hidden {
+            display: none;
+        }
+
+        .legend {
+            position: absolute;
+            left: 12px;
+            bottom: 12px;
+            z-index: 1000;
+            display: flex;
+            gap: 14px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, .92);
+            box-shadow: 0 2px 8px rgba(15, 23, 42, .18);
+            font-size: 12px;
+            color: #334155;
+            pointer-events: none;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="hint" class="hint hidden"></div>
+    <div class="legend">
+        <span class="legend-item"><i class="legend-dot" style="background:#10B981"></i>有作业</span>
+        <span class="legend-item"><i class="legend-dot" style="background:#F59E0B"></i>停滞 1–2 天</span>
+        <span class="legend-item"><i class="legend-dot" style="background:#EF4444"></i>中断 3 天以上</span>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            const DEFAULT_CENTER = [113.4, 23.1];
+            const mapEl = document.getElementById('map');
+            const hintEl = document.getElementById('hint');
+
+            // 前端报错（含高德鉴权失败）转发给 C#，通过 WebMessageReceived 输出到 IDE 调试窗口
+            function reportToHost(level, message) {
+                try {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage('map-console:' + level + ': ' + String(message));
+                    }
+                } catch (e) {
+                    // 宿主通道不可用时忽略
+                }
+            }
+
+            const nativeConsoleError = console.error.bind(console);
+            console.error = function () {
+                const text = Array.prototype.slice.call(arguments).join(' ');
+                reportToHost('ERROR', text);
+                nativeConsoleError.apply(null, arguments);
+            };
+
+            window.addEventListener('error', function (event) {
+                reportToHost('ERROR', (event.message || '脚本错误') + ' @' + (event.filename || '') + ':' + (event.lineno || 0));
+            });
+
+            window.addEventListener('unhandledrejection', function (event) {
+                const reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+                reportToHost('REJECTION', reason);
+            });
+
+            // 方式 A：配置只从 URL 查询参数注入，源码内不保存任何 Key 字面量。
+            // C# 侧导航到 https://assets.local/map.html?key=xxx&jscode=yyy
+            const query = new URLSearchParams(window.location.search);
+            const apiKey = (query.get('key') || '').trim();
+            const securityCode = (query.get('jscode') || '').trim();
+
+            let map = null;
+            let markers = [];
+            let amapReady = false;
+            let scriptLoading = false;
+            let siteData = [];
+
+            // 与宿主建立双向通道：先告知已就绪，后续只接收工点数据（Key 不再走消息注入）
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.addEventListener('message', function (event) {
+                    handleSiteData(event.data);
+                });
+                window.chrome.webview.postMessage('map-ready');
+            }
+
+            // 启动顺序固定：1) 设置安全密钥 → 2) 加载 maps 脚本 → 3) onload 后渲染 Marker
+            if (!apiKey) {
+                showHint('未配置高德地图 JS API Key：请到「设置 → 业务与参数 → 施工进度地图」填写 Key 与安全密钥并保存。');
+            } else {
+                bootstrapAmap();
+            }
+
+            function bootstrapAmap() {
+                if (scriptLoading || amapReady) {
+                    return;
+                }
+
+                scriptLoading = true;
+
+                // 必须在加载 maps 脚本之前设置安全密钥，否则高德会报 INVALID_USER_SCODE
+                if (securityCode) {
+                    window._AMapSecurityConfig = { securityJsCode: securityCode };
+                }
+
+                const script = document.createElement('script');
+                script.async = true;
+                script.src = 'https://webapi.amap.com/maps?v=2.0&key=' + encodeURIComponent(apiKey);
+                script.onload = function () {
+                    scriptLoading = false;
+                    amapReady = true;
+                    initMap();
+                    renderSites();
+                };
+                script.onerror = function () {
+                    scriptLoading = false;
+                    showHint('高德地图脚本加载失败：请检查网络连接，或确认 JS API Key 是否有效。');
+                };
+                document.head.appendChild(script);
+            }
+
+            function handleSiteData(data) {
+                if (!data || typeof data !== 'object' || data.type !== 'map-data') {
+                    return;
+                }
+
+                siteData = Array.isArray(data.sites) ? data.sites : [];
+
+                if (amapReady) {
+                    renderSites();
+                }
+            }
+
+            function initMap() {
+                if (map) {
+                    return;
+                }
+
+                map = new AMap.Map(mapEl, {
+                    viewMode: '2D',
+                    zoom: 12,
+                    center: DEFAULT_CENTER,
+                    mapStyle: 'whitesmoke'
+                });
+
+                window.addEventListener('resize', function () {
+                    if (map) {
+                        map.resize();
+                    }
+                });
+            }
+
+            function renderSites() {
+                if (!map) {
+                    return;
+                }
+
+                clearMarkers();
+
+                if (siteData.length === 0) {
+                    showHint('暂无带经纬度的工点记录：扫描到水印照片后会自动上图，未识别坐标的照片保留在「待定位池」。');
+                    return;
+                }
+
+                hideHint();
+
+                siteData.forEach(function (site) {
+                    const lng = Number(site.lng);
+                    const lat = Number(site.lat);
+                    if (!isFinite(lng) || !isFinite(lat) || (lng === 0 && lat === 0)) {
+                        return;
+                    }
+
+                    markers.push(new AMap.Marker({
+                        position: [lng, lat],
+                        content: buildBubble(site),
+                        anchor: 'bottom-center',
+                        offset: new AMap.Pixel(0, -4),
+                        zIndex: 200,
+                        title: site.siteName || '工点'
+                    }));
+                });
+
+                if (markers.length === 0) {
+                    showHint('暂无有效坐标的工点记录。');
+                    return;
+                }
+
+                map.add(markers);
+
+                // 单点直接放大到街道级，多点自动缩放到全部气泡可见
+                if (markers.length === 1) {
+                    map.setZoomAndCenter(15, markers[0].getPosition());
+                } else {
+                    map.setFitView(markers, false, [80, 80, 80, 80], 15);
+                }
+            }
+
+            function clearMarkers() {
+                if (map && markers.length > 0) {
+                    map.remove(markers);
+                }
+                markers = [];
+            }
+
+            function buildBubble(site) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'bubble';
+                wrapper.style.setProperty('--status', site.colorHex || '#10B981');
+
+                const name = document.createElement('div');
+                name.className = 'bubble-name';
+                name.textContent = site.siteName || '未命名工点';
+
+                const progress = document.createElement('div');
+                progress.className = 'bubble-progress';
+                progress.textContent = site.progressText || '今日无作业记录';
+
+                const status = document.createElement('div');
+                status.className = 'bubble-status';
+                status.textContent = site.statusText || '有作业';
+
+                const tail = document.createElement('i');
+                tail.className = 'bubble-tail';
+
+                wrapper.appendChild(name);
+                wrapper.appendChild(progress);
+                wrapper.appendChild(status);
+                wrapper.appendChild(tail);
+                return wrapper;
+            }
+
+            function showHint(text) {
+                hintEl.textContent = text;
+                hintEl.classList.remove('hidden');
+            }
+
+            function hideHint() {
+                hintEl.classList.add('hidden');
+            }
+        })();
+    </script>
+</body>
+</html>

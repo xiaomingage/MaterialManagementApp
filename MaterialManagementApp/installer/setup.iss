@@ -1,4 +1,4 @@
-; ============================================================================
+﻿; ============================================================================
 ; MaterialManagementApp 安装程序脚本（Inno Setup 6）
 ; 编译方式（任选其一）：
 ;   1. 图形界面：用 Inno Setup 打开本文件，按 F9 编译
@@ -17,7 +17,7 @@
 
 #define MyAppName "物资管理系统"
 #define MyAppNameEn "MaterialManagementApp"
-#define MyAppVersion "1.7.0"
+#define MyAppVersion "1.9.0"
 #define MyAppPublisher "MaterialManagementApp"
 #define MyAppExeName "MaterialManagementApp.exe"
 ; 发布产物目录（dotnet publish -c Release -r win-x64 的输出，相对本脚本所在目录）

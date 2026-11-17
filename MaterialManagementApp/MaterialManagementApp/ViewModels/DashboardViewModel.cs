@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
 
@@ -44,6 +47,29 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     private string _statusMessage;
 
+    /// <summary>今日扫描到的施工记录（含待定位），供「今日施工记录」列表展示。</summary>
+    public ObservableCollection<SiteProgressDaily> TodayRecords { get; } = new();
+
+    /// <summary>推送给高德地图 WebView2 的 JSON（工点点位 + 状态语义 + Key）。</summary>
+    [ObservableProperty]
+    private string _mapPayload = "{}";
+
+    /// <summary>施工进度概况文案，展示扫描张数、覆盖工点与状态色含义。</summary>
+    [ObservableProperty]
+    private string _constructionSummary = string.Empty;
+
+    /// <summary>待定位池照片条数（未提取到经纬度，已保留但未上图）。</summary>
+    [ObservableProperty]
+    private int _pendingLocationCount;
+
+    /// <summary>待定位池提示文案，数量为 0 时为空串（由转换器隐藏容器）。</summary>
+    [ObservableProperty]
+    private string _pendingLocationHint = string.Empty;
+
+    /// <summary>今日无记录时的空状态提示；有记录时为空串。</summary>
+    [ObservableProperty]
+    private string _todayRecordsHint = string.Empty;
+
     /// <summary>加载台账概况统计。查询失败时记录提示而不抛出，保证首页始终可打开。</summary>
     [RelayCommand]
     public void Load()
@@ -76,6 +102,49 @@ public partial class DashboardViewModel : ObservableObject
         {
             _logger.LogError(ex, "加载仪表盘统计数据失败。");
             StatusMessage = $"统计加载失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// 刷新施工进度数据：重新生成地图 JSON、当日记录列表与待定位池提示。
+    /// 每次进入首页、以及后台扫描入库完成后调用；查询失败只提示，不抛出。
+    /// </summary>
+    public void RefreshConstructionData()
+    {
+        try
+        {
+            MapPayload = SiteProgressService.Instance.BuildMapPayload();
+
+            var today = DateTime.Today.ToString("yyyy-MM-dd");
+            var rows = DatabaseService.Instance.GetSiteProgressForDate(today)
+                .OrderBy(row => row.IsLocated ? 0 : 1)
+                .ThenByDescending(row => row.LastShotAt)
+                .ToList();
+
+            TodayRecords.Clear();
+            foreach (var row in rows)
+            {
+                TodayRecords.Add(row);
+            }
+
+            PendingLocationCount = DatabaseService.Instance.CountPendingLocationProgress();
+            PendingLocationHint = PendingLocationCount > 0
+                ? $"待定位池：{PendingLocationCount} 张照片未识别到经纬度，记录已保留、暂未上图。"
+                : string.Empty;
+            TodayRecordsHint = rows.Count == 0
+                ? "今日还没有扫描到水印照片。配置根目录后，把「今日水印相机」的照片文件夹放进去即可自动解析。"
+                : string.Empty;
+
+            var locatedSiteCount = rows.Where(row => row.IsLocated).Select(row => row.SiteName).Distinct().Count();
+            ConstructionSummary = rows.Count == 0
+                ? "暂无今日扫描记录。"
+                : $"今日扫描 {rows.Sum(row => row.PhotoCount)} 张照片，覆盖 {locatedSiteCount} 个工点；" +
+                  "状态色：绿色有作业 / 黄色停滞 1–2 天 / 红色中断 3 天以上。";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "加载施工进度数据失败。");
+            ConstructionSummary = $"施工进度加载失败：{ex.Message}";
         }
     }
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
-using Windows.Storage.Pickers;
+using MaterialManagementApp.Services;
 
 namespace MaterialManagementApp.Common;
 
@@ -16,16 +16,16 @@ namespace MaterialManagementApp.Common;
 public readonly record struct HeaderCell(string Text, int ColSpan = 1, int RowSpan = 1);
 
 /// <summary>
-/// 基于 ClosedXML 的 Excel 导出引擎。负责保存对话框与模板样式助手，
+/// 基于 ClosedXML 的 Excel 导出引擎。负责归档写入与模板样式助手，
 /// 不含任何业务字段知识；业务语义由 Services\Export 下的适配类提供。
 /// </summary>
 public static class ExcelExporter
 {
-    /// <summary>弹出保存对话框并把构建好的工作簿写入用户选择的位置。</summary>
+    /// <summary>把构建好的工作簿写入归档导出目录（Exports\Excel\yyyyMMdd）。</summary>
     /// <param name="suggestedFileName">建议文件名（不含扩展名）。</param>
     /// <param name="build">在工作簿上写入内容的委托，由调用方决定版式。</param>
-    /// <returns>保存成功返回 true；用户取消或无法获取窗口句柄时返回 false。</returns>
-    /// <exception cref="IOException">目标文件被占用或无写入权限时抛出，由调用方提示。</exception>
+    /// <returns>写入成功返回 true。</returns>
+    /// <exception cref="IOException">归档目录不可写或文件被占用时抛出，由调用方提示。</exception>
     public static async Task<bool> SaveAsync(string suggestedFileName, Action<IXLWorkbook> build)
     {
         ArgumentNullException.ThrowIfNull(build);
@@ -230,41 +230,27 @@ public static class ExcelExporter
         range.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
     }
 
-    /// <summary>弹出保存对话框并把工作簿写入用户选择的文件。</summary>
+    /// <summary>把工作簿写入归档导出目录，文件名冲突时自动追加序号，绝不覆盖旧文件。</summary>
     /// <param name="suggestedFileName">建议文件名（不含扩展名）。</param>
     /// <param name="workbook">待保存的工作簿。</param>
-    /// <returns>保存成功返回 true；用户取消或无法获取窗口句柄时返回 false。</returns>
-    private static async Task<bool> SaveWorkbookAsync(string suggestedFileName, IXLWorkbook workbook)
+    /// <returns>写入成功返回 true。</returns>
+    /// <exception cref="IOException">归档目录不可写时抛出，由调用方提示。</exception>
+    private static Task<bool> SaveWorkbookAsync(string suggestedFileName, IXLWorkbook workbook)
     {
-        var window = App.MainWindow;
-        if (window is null)
+        using var buffer = new MemoryStream();
+        workbook.SaveAs(buffer);
+        buffer.Position = 0;
+
+        var result = FileStorageService.Instance.StoreExport(
+            FileStorageService.ExcelCategory,
+            $"{suggestedFileName}.xlsx",
+            target => buffer.CopyTo(target));
+
+        if (!result.Success)
         {
-            return false;
+            throw new IOException(result.Error);
         }
 
-        var picker = new FileSavePicker
-        {
-            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
-            SuggestedFileName = suggestedFileName
-        };
-        picker.FileTypeChoices.Add("Excel 工作簿", new List<string> { ".xlsx" });
-
-        // WinUI 3 的保存对话框是 Win32 对话框，必须先绑定窗口句柄，否则构造后直接抛异常
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-
-        var file = await picker.PickSaveFileAsync();
-        if (file is null)
-        {
-            return false;
-        }
-
-        using var stream = await file.OpenStreamForWriteAsync();
-
-        // 用户选择已存在的同名文件时，若不清空会把新内容覆盖到旧内容的开头，尾部残留旧字节
-        stream.SetLength(0);
-        workbook.SaveAs(stream);
-        await stream.FlushAsync();
-        return true;
+        return Task.FromResult(true);
     }
 }

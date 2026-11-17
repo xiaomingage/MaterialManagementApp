@@ -31,7 +31,7 @@ public sealed class DatabaseMigrator
     private static readonly ILogger _logger = AppLog.CreateLogger<DatabaseMigrator>();
 
     /// <summary>程序当前期望的数据库版本号。每次新增迁移脚本时递增 1。</summary>
-    public const int TargetVersion = 1;
+    public const int TargetVersion = 2;
 
     /// <summary>
     /// 增量迁移脚本：键为「起始版本」，值为该版本升级到下一版本需要顺序执行的 SQL 语句。
@@ -39,8 +39,39 @@ public sealed class DatabaseMigrator
     /// </summary>
     private static readonly Dictionary<int, string[]> Migrations = new()
     {
-        // 示例（勿直接启用）：
-        // [1] = new[] { "ALTER TABLE MaterialLedger ADD COLUMN Remark2 TEXT NOT NULL DEFAULT '';" },
+        // 1 → 2：施工进度（水印相机照片扫描）相关表；只新增表与索引，幂等
+        [1] = new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS SiteProgressDaily (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SiteName TEXT NOT NULL DEFAULT '',
+                Date TEXT NOT NULL DEFAULT '',
+                Category TEXT NOT NULL DEFAULT 'Unknown',
+                Lng REAL NOT NULL DEFAULT 0,
+                Lat REAL NOT NULL DEFAULT 0,
+                WgsLng REAL NOT NULL DEFAULT 0,
+                WgsLat REAL NOT NULL DEFAULT 0,
+                PhotoCount INTEGER NOT NULL DEFAULT 0,
+                FirstShotAt TEXT NOT NULL DEFAULT '',
+                LastShotAt TEXT NOT NULL DEFAULT '',
+                SourceFilePath TEXT NOT NULL DEFAULT '',
+                IsLocated INTEGER NOT NULL DEFAULT 1,
+                UpdatedAt TEXT NOT NULL DEFAULT '');
+            """,
+            "CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Date ON SiteProgressDaily(Date);",
+            "CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Site ON SiteProgressDaily(SiteName, Date);",
+            "CREATE INDEX IF NOT EXISTS IX_SiteProgressDaily_Location ON SiteProgressDaily(IsLocated, Date);",
+            """
+            CREATE TABLE IF NOT EXISTS WatermarkScannedFile (
+                FilePath TEXT PRIMARY KEY,
+                FileSize INTEGER NOT NULL DEFAULT 0,
+                FileLastWriteTicks INTEGER NOT NULL DEFAULT 0,
+                Status TEXT NOT NULL DEFAULT '',
+                Message TEXT NOT NULL DEFAULT '',
+                ProcessedAt TEXT NOT NULL DEFAULT '');
+            """
+        },
     };
 
     /// <summary>

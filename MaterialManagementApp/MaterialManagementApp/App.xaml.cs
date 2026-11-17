@@ -270,6 +270,19 @@ namespace MaterialManagementApp
                 _logger.LogError(ex, "数据库初始化失败。");
             }
 
+            // 文件归档目录：只创建约定子目录并清理过期缓存，不移动数据库、日志或历史文件。
+            // 目录初始化失败不阻断启动，具体原因已由 FileStorageService 写入日志。
+            try
+            {
+                FileStorageService.Instance.EnsureCreated();
+                FileStorageService.Instance.CleanupExpired();
+                _logger.LogInformation("当前文件归档根目录：{Root}。", FileStorageService.Instance.CurrentArchiveRoot);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "文件归档目录初始化失败。");
+            }
+
             _window = new MainWindow();
             MainWindow = _window;
 
@@ -279,9 +292,13 @@ namespace MaterialManagementApp
 
             _window.Activate();
 
+            // 水印相机照片自动扫描：未配置根目录或目录不存在时内部直接返回，不影响启动
+            WatermarkScannerService.Instance.Start();
+
             // 正常退出时释放单实例资源并冲刷缓冲，确保最后的日志落盘、不遗留任何进程相关对象
             _window.Closed += (_, _) =>
             {
+                WatermarkScannerService.Instance.Stop();
                 ShutdownSingleInstanceGuard();
                 _logger.LogInformation("应用正常退出，版本=v{Version}。", typeof(App).Assembly.GetName().Version);
                 Serilog.Log.CloseAndFlush();

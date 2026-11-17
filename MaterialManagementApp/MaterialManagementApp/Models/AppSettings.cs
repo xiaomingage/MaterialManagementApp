@@ -49,6 +49,13 @@ public sealed class AppSettings
     /// <summary>数据库文件的完整路径；为空表示使用程序目录下 Data\MaterialSystem.db（配置了绝对路径则优先使用）。</summary>
     public string DatabasePath { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 文件归档根目录（导入/导出文件的存放根）；为空表示沿用 AppPaths 的默认解析
+    /// （安装版为安装时选择的数据根目录，便携版为程序目录\Data）。
+    /// 数据库、日志与备份不随本设置移动。
+    /// </summary>
+    public string ArchiveRootPath { get; set; } = string.Empty;
+
     /// <summary>本地 AI（Ollama）服务地址，默认本机 11434 端口。</summary>
     public string OllamaUrl { get; set; } = "http://localhost:11434";
 
@@ -145,6 +152,18 @@ public sealed class AppSettings
 
     /// <summary>数据库备份保留份数，超出后自动清理最旧的备份，最小保留 1 份。</summary>
     public int BackupRetentionCount { get; set; } = 15;
+
+    /// <summary>
+    /// 水印图片根目录：存放「今日水印相机」批量下载照片的固定文件夹（可含日期子文件夹）。
+    /// 为空表示不启用自动扫描，不影响其他功能。
+    /// </summary>
+    public string WatermarkRootPath { get; set; } = string.Empty;
+
+    /// <summary>高德地图 JS API 2.0 的 Key（工作台施工进度地图使用）。</summary>
+    public string AmapJsApiKey { get; set; } = string.Empty;
+
+    /// <summary>高德地图 JS API 安全密钥（2021 年后申请的应用需配合 Key 使用，可选）。</summary>
+    public string AmapSecurityCode { get; set; } = string.Empty;
 
     /// <summary>当前 AI 服务商是否为本地 Ollama；否则视为在线 AI 服务商。</summary>
     [JsonIgnore]

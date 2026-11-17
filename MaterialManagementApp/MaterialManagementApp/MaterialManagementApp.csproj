@@ -22,7 +22,7 @@
     <!-- .NET 运行时自包含：目标机器无需预装 .NET 8 Desktop Runtime -->
     <SelfContained>true</SelfContained>
     <!-- 应用版本号，与安装脚本保持一致 -->
-    <Version>1.7.0</Version>
+    <Version>1.9.0</Version>
     <!-- 应用图标：exe、任务栏、桌面快捷方式统一使用 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
@@ -67,6 +67,10 @@
     </Content>
     <!-- 图标同时随生成输出一份：MainWindow 通过 AppWindow.SetIcon 读取它设置窗口/任务栏图标 -->
     <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- 工作台施工进度地图模板：运行期读取后通过 NavigateToString 载入 WebView2 -->
+    <Content Include="Assets\map.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

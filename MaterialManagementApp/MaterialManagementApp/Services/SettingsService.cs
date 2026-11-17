@@ -291,6 +291,10 @@ public sealed class SettingsService
         settings.DefaultUnit ??= string.Empty;
         settings.DefaultHandler ??= string.Empty;
         settings.DatabasePath ??= string.Empty;
+        settings.ArchiveRootPath ??= string.Empty;
+        settings.WatermarkRootPath ??= string.Empty;
+        settings.AmapJsApiKey ??= string.Empty;
+        settings.AmapSecurityCode ??= string.Empty;
         settings.OllamaUrl ??= "http://localhost:11434";
         settings.OllamaModel ??= string.Empty;
         settings.AccentColor ??= "#2563EB";

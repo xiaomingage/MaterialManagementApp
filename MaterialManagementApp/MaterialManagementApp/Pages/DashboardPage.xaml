@@ -4,8 +4,10 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:common="using:MaterialManagementApp.Common"
+    xmlns:models="using:MaterialManagementApp.Models"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Unloaded="OnPageUnloaded"
     mc:Ignorable="d">
 
     <Page.Resources>
@@ -239,6 +241,85 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+            </StackPanel>
+
+            <!-- 施工进度地图：WebView2 承载高德 JS API，气泡常显（数据全部来自数据库） -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="施工进度地图" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <Border
+                    Height="420"
+                    Padding="0"
+                    CornerRadius="8"
+                    Style="{StaticResource StatCardBorderStyle}">
+                    <Grid CornerRadius="8">
+                        <WebView2 x:Name="ProgressMap" Loaded="OnProgressMapLoaded" />
+                        <!-- WebView2 运行时缺失或初始化失败时的兜底提示 -->
+                        <TextBlock
+                            x:Name="MapErrorText"
+                            Margin="24"
+                            VerticalAlignment="Center"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </Grid>
+                </Border>
+                <TextBlock
+                    Text="{x:Bind ViewModel.ConstructionSummary, Mode=OneWay}"
+                    Style="{ThemeResource CaptionTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- 今日施工记录：展示数据库中的当日扫描结果（含不可上图的待定位照片） -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="今日施工记录" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <Border Style="{StaticResource StatCardBorderStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock
+                            Text="{x:Bind ViewModel.PendingLocationHint, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.PendingLocationHint, Mode=OneWay, Converter={StaticResource StringToVisibility}}"
+                            Style="{ThemeResource CaptionTextBlockStyle}"
+                            Foreground="#D97706"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="{x:Bind ViewModel.TodayRecordsHint, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.TodayRecordsHint, Mode=OneWay, Converter={StaticResource StringToVisibility}}"
+                            Style="{ThemeResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.TodayRecords, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:SiteProgressDaily">
+                                        <Grid ColumnSpacing="16" Padding="0,7">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                Text="{x:Bind SiteName}"
+                                                FontWeight="SemiBold"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                Text="{x:Bind DisplayCategory}"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock
+                                                Grid.Column="2"
+                                                Text="{x:Bind PhotoCountText}"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock
+                                                Grid.Column="3"
+                                                Text="{x:Bind ShotAtText}"
+                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <!-- 状态提示条：有消息才显示，浅灰容器与卡片语言一致 -->

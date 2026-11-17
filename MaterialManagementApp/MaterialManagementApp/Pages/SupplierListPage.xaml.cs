@@ -455,21 +455,17 @@ public sealed partial class SupplierListPage : Page
             return null;
         }
 
-        var dataRoot = AppPaths.DataRoot ?? Path.Combine(AppContext.BaseDirectory, "Data");
-        var contractsDir = Path.Combine(dataRoot, ContractsSubDir);
-        Directory.CreateDirectory(contractsDir);
-
-        var targetPath = Path.Combine(contractsDir, $"{Guid.NewGuid():N}.pdf");
-        using (var source = await file.OpenStreamForReadAsync())
-        using (var target = File.Create(targetPath))
+        // 归档到 Imports\合同\yyyyMMdd，文件名冲突自动追加序号；失败由调用方按异常处理
+        var archived = FileStorageService.Instance.StoreImport(FileStorageService.ContractCategory, file.Path);
+        if (!archived.Success || string.IsNullOrWhiteSpace(archived.Path))
         {
-            await source.CopyToAsync(target);
+            throw new IOException(archived.Error ?? "合同文件归档失败。");
         }
 
-        supplier.ContractFilePath = Path.GetRelativePath(dataRoot, targetPath);
+        supplier.ContractFilePath = archived.Path;
         DatabaseService.Instance.UpdateSupplier(supplier);
         ContractItems.StatusMessage = "合同文件已保存，开始解析…";
-        return targetPath;
+        return archived.Path;
     }
 
     /// <summary>
