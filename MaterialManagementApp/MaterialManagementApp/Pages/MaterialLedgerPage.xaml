@@ -86,10 +86,11 @@
             </Grid>
         </Border>
 
-        <!-- 表格上方的操作按钮。「保存」批量入库表格中的全部草稿行（浅绿底）；
-             新增不再需要按钮——点击表格空白处即自动插入草稿行 -->
+        <!-- 表格上方的操作按钮。「新增」显式插入草稿行并自动进入编辑；
+             「保存」批量入库表格中的全部草稿行（浅绿底）；空白未填的新增行会自动移除 -->
         <StackPanel Grid.Row="2" Spacing="8">
             <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="新增" Click="OnAddRowClick" />
                 <Button
                     Content="保存"
                     Command="{x:Bind ViewModel.SaveAllDraftsCommand}"
@@ -124,8 +125,9 @@
         </StackPanel>
 
         <!-- 表格区：单元格可编辑，金额列为只读的派生值。
-             交互约定：点击表格空白处即插入草稿行（DataGridQuickAdd 行为，见 code-behind）；
-             已入库的行离开编辑即自动保存；草稿行由上方「保存」批量入库；行末仅保留「删除」。
+             交互约定：只能通过上方「新增」按钮插入草稿行，新增后自动进入编辑；
+             已入库的行离开编辑即自动保存；草稿行由上方「保存」批量入库；
+             未填写任何内容的空白新增行在离开编辑 / Esc / 保存 / 刷新时自动移除；行末仅保留「删除」。
              无数据时叠加居中空态提示（记录数为 0 时显示，新增/删除行即时切换） -->
         <Grid Grid.Row="3">
             <ctrl:LedgerDataGrid
@@ -139,6 +141,7 @@
             SelectionChanged="OnLedgerSelectionChanged"
             RowEditEnded="OnLedgerRowEditEnded"
             LoadingRow="OnLedgerLoadingRow"
+            KeyDown="OnLedgerGridKeyDown"
             ItemsSource="{x:Bind ViewModel.Ledgers, Mode=OneWay}">
             <!-- 右键表格弹出「显示/隐藏列」配置菜单（动态生成，见 code-behind）；
                  列宽拖动由 DataGrid 默认 CanUserResizeColumns 支持 -->
@@ -275,8 +278,7 @@
             </ctrl:LedgerDataGrid.Columns>
         </ctrl:LedgerDataGrid>
 
-        <!-- 空态：表格无数据时显示，居中不遮挡表头；新增行后即时隐藏。
-             IsHitTestVisible=False 让点击穿透到表格空白区，直接触发「点空白即新增」 -->
+        <!-- 空态：表格无数据时显示，居中不遮挡表头；新增行后即时隐藏 -->
         <StackPanel
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
@@ -294,7 +296,7 @@
                 Style="{ThemeResource BodyStrongTextBlockStyle}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="点击表格空白处即可直接录入第一条记录，也可以使用「导入单据 / OCR 识别」批量导入。"
+                Text="点击上方「新增」按钮录入第一条记录，也可以使用「导入单据 / OCR 识别」批量导入。"
                 Style="{ThemeResource CaptionTextBlockStyle}"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 HorizontalAlignment="Center"

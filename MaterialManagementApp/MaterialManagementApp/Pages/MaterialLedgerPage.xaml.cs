@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Input;
-using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.WinUI.UI.Controls;
 using MaterialManagementApp.Common;
 using MaterialManagementApp.Models;
@@ -21,8 +19,10 @@ namespace MaterialManagementApp.Pages;
 /// <summary>
 /// 台账明细页面（地材台账 → 台账明细）。
 /// 上半部分为查询筛选面板，下半部分为数据列表与操作：
-/// 点击表格空白处即插入草稿行（浅绿底标记，可连续录入多条），工具栏「保存」批量校验入库；
+/// 仅通过工具栏「新增」按钮显式插入草稿行（浅绿底标记，可连续录入多条），
+/// 新增后自动进入编辑并定位到「入库日期」列；工具栏「保存」批量校验入库。
 /// 已入库的行离开编辑即自动保存（Excel 式），行末仅保留「删除」；
+/// 未填写任何内容的空白新增行在离开编辑 / 按 Esc / 保存 / 刷新时自动移除。
 /// 金额列为 数量 × 单价 的派生值，不手工录入。
 /// </summary>
 public sealed partial class MaterialLedgerPage : Page
@@ -35,12 +35,6 @@ public sealed partial class MaterialLedgerPage : Page
 
     /// <summary>页面视图模型，供 XAML 通过 x:Bind 绑定。</summary>
     public MaterialLedgerViewModel ViewModel { get; } = new();
-
-    /// <summary>
-    /// 「点空白即新增」的命令：由 DataGridQuickAdd 附加行为在点击表格空白区时触发，
-    /// 也可供后续入口（如快捷键）复用。
-    /// </summary>
-    public ICommand CreateDraftRowCommand { get; }
 
     /// <summary>初始化页面。</summary>
     public MaterialLedgerPage()
@@ -59,11 +53,6 @@ public sealed partial class MaterialLedgerPage : Page
 
         // 翻页 / 查询 / 刷新 / 重置前存在草稿行时，由页面弹出「离开将丢弃」确认弹窗
         ViewModel.ConfirmDiscardDraftsAsync = ConfirmDiscardDraftsAsync;
-
-        // 开启「点空白即新增」：行为组件做空白命中测试，命中后执行本页创建草稿行的命令
-        CreateDraftRowCommand = new RelayCommand(CreateDraftRowAndBeginEdit);
-        DataGridQuickAdd.SetIsEnabled(LedgerGrid, true);
-        DataGridQuickAdd.SetBlankClickCommand(LedgerGrid, CreateDraftRowCommand);
     }
 
     /// <summary>
@@ -162,39 +151,79 @@ public sealed partial class MaterialLedgerPage : Page
     }
 
     /// <summary>
-    /// 「点空白即新增」入口：在表格首行插入草稿行，并让该行立即进入编辑状态，
-    /// 用户无需任何按钮即可开始录入。
+    /// 工具栏「新增」按钮：显式插入一条草稿行并立即进入编辑状态。
+    /// 若表格中已经存在一条完全空白的草稿行，则直接复用它（避免连续点击堆出多条空行），
+    /// 数据变更本身由 ViewModel 的 <see cref="MaterialLedgerViewModel.NewRowCommand"/> 完成。
     /// </summary>
-    private void CreateDraftRowAndBeginEdit()
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnAddRowClick(object sender, RoutedEventArgs e)
     {
-        ViewModel.NewRowCommand.Execute(null);
+        var blankDraft = ViewModel.Ledgers
+            .FirstOrDefault(row => row.IsNewRow && MaterialLedgerViewModel.IsBlankDraft(row));
+        if (blankDraft is null)
+        {
+            ViewModel.NewRowCommand.Execute(null);
+            blankDraft = ViewModel.Ledgers.FirstOrDefault(row => row.IsNewRow);
+        }
 
-        var row = ViewModel.Ledgers.FirstOrDefault(x => x.IsNewRow);
-        if (row is null)
+        if (blankDraft is null)
         {
             return;
         }
 
-        LedgerGrid.SelectedItem = row;
-        LedgerGrid.CurrentColumn = LedgerGrid.Columns[0];
-        LedgerGrid.ScrollIntoView(row, LedgerGrid.Columns[0]);
+        FocusRowForEdit(blankDraft);
+    }
 
-        // 新行的单元格容器要等本次布局完成后才生成，BeginEdit 必须延后一帧再调用；
-        // 点空白新增时焦点仍停留在窗口级（没有任何单元格被点击），BeginEdit 前必须先让表格拿到焦点
+    /// <summary>
+    /// 表格按 Esc：终止编辑并清理空白新增行。
+    /// 编辑态下 DataGrid 会先取消编辑（LedgerDataGrid 的空白行防呆随即移除空行）；
+    /// 这里再延后一帧兜底清理一次，覆盖「新增后尚未真正进入编辑」的情况。
+    /// </summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">键盘事件参数。</param>
+    private void OnLedgerGridKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Escape)
+        {
+            return;
+        }
+
+        // 延后到编辑管线结束之后，避免在 DataGrid 正在结束编辑时同步改动集合
+        _ = DispatcherQueue.TryEnqueue(() => ViewModel.RemoveBlankDrafts());
+    }
+
+    /// <summary>
+    /// 选中指定行并进入编辑：当前列定位到第一个可编辑的文本列（即「入库日期」），
+    /// 新行的单元格容器要等本次布局完成后才生成，因此选中与 BeginEdit 都要延后一帧。
+    /// </summary>
+    /// <param name="row">要编辑的草稿行。</param>
+    private void FocusRowForEdit(MaterialLedger row)
+    {
+        // 勾选列是模板列且没有绑定，不能作为录入起点；优先选第一个非只读的文本列
+        var column = LedgerGrid.Columns.FirstOrDefault(c => c is DataGridTextColumn && !c.IsReadOnly)
+                     ?? LedgerGrid.Columns.FirstOrDefault(c => !c.IsReadOnly)
+                     ?? LedgerGrid.Columns[0];
+
+        LedgerGrid.SelectedItem = row;
+        LedgerGrid.ScrollIntoView(row, column);
+
         DispatcherQueue.TryEnqueue(() =>
         {
             try
             {
+                // 表格尚未拿到焦点时 set_CurrentColumn 可能失败（无当前行），先聚焦再设列
                 if (!LedgerGrid.Focus(FocusState.Pointer))
                 {
                     System.Diagnostics.Debug.WriteLine("[MaterialLedgerPage] 表格获取焦点失败，保持选中态。");
                 }
 
+                LedgerGrid.CurrentColumn = column;
                 LedgerGrid.BeginEdit();
             }
             catch (Exception ex)
             {
-                // 尚未生成行容器时 BeginEdit 会失败，此时保持选中态即可，不影响手工点击编辑
+                // 行容器未就绪时保持选中态即可，用户手工点格编辑不受影响
                 System.Diagnostics.Debug.WriteLine($"[MaterialLedgerPage] 自动进入编辑失败：{ex.Message}");
             }
         });
@@ -561,6 +590,9 @@ public sealed partial class MaterialLedgerPage : Page
     /// <param name="e">路由事件参数。</param>
     private async void OnExportTemplateClick(object sender, RoutedEventArgs e)
     {
+        // 导出前先清掉未填写任何内容的空白新增行，避免残留的空行影响用户对表格状态的判断
+        ViewModel.RemoveBlankDrafts();
+
         try
         {
             // 导出全部筛选结果而非当前页；尚未保存的空白行不入导出结果，避免把空记录写进 Excel

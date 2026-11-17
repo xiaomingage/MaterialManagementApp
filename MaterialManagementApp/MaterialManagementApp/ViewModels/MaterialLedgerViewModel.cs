@@ -340,6 +340,10 @@ public partial class MaterialLedgerViewModel : ObservableObject
     /// <returns>true 表示可以继续执行加载动作。</returns>
     private async Task<bool> EnsureDraftsDiscardedAsync()
     {
+        // 纯空白的新增行不算「待保存草稿」：先静默清理，
+        // 避免用户点了新增却什么都没填时，刷新 / 查询 / 翻页被误判为有未保存内容而弹确认框
+        RemoveBlankDrafts();
+
         if (!HasDrafts)
         {
             return true;
@@ -914,12 +918,12 @@ public partial class MaterialLedgerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 判断草稿行是否完全空白（所有录入列都没有内容），供保存时清理。
+    /// 判断草稿行是否完全空白（所有录入列都没有内容），供保存 / 离开 / 失去焦点时清理。
     /// 进场日期/时间是点新增时自动填的默认值，不算「已填写内容」。
     /// </summary>
     /// <param name="row">待判断的行。</param>
     /// <returns>完全空白返回 true。</returns>
-    private static bool IsBlankDraft(MaterialLedger row)
+    public static bool IsBlankDraft(MaterialLedger row)
     {
         return string.IsNullOrWhiteSpace(row.MaterialName)
             && string.IsNullOrWhiteSpace(row.DocNo)
@@ -936,9 +940,15 @@ public partial class MaterialLedgerViewModel : ObservableObject
             && row.UnitPrice == 0;
     }
 
-    /// <summary>移除全部完全空白的草稿行；用户已开始填写内容的草稿行保持原样。</summary>
-    private void RemoveBlankDrafts()
+    /// <summary>
+    /// 移除全部完全空白的草稿行；用户已开始填写内容的草稿行保持原样。
+    /// 由「保存 / 刷新 / 查询 / 翻页 / 行编辑结束 / Esc 取消」等时机调用，
+    /// 保证点了一下新增但什么都没填的空行不会遗留在界面上或进入数据库。
+    /// </summary>
+    /// <returns>本次移除的空白草稿行数量。</returns>
+    public int RemoveBlankDrafts()
     {
+        var removed = 0;
         for (var i = Ledgers.Count - 1; i >= 0; i--)
         {
             var draft = Ledgers[i];
@@ -946,8 +956,17 @@ public partial class MaterialLedgerViewModel : ObservableObject
             {
                 DetachTotalsTracking(draft);
                 Ledgers.RemoveAt(i);
+                removed++;
             }
         }
+
+        if (removed > 0)
+        {
+            RecalculateTotals();
+            _logger.LogInformation("已自动移除 {Count} 行未填写任何内容的空白新增行。", removed);
+        }
+
+        return removed;
     }
 
     /// <summary>订阅单条记录的数量/单价变化，使表格内编辑后合计立即刷新。</summary>
