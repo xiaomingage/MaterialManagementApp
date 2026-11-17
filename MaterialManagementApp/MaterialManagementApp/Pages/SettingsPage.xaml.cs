@@ -395,6 +395,29 @@ public sealed partial class SettingsPage : Page
         System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\"");
     }
 
+    /// <summary>
+    /// 「重置统计」：二次确认后清空本地 OCR / 地图加载计数（仅本地估算，不影响业务数据）。
+    /// </summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private async void OnResetUsageStatsClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "确认重置统计",
+            Content = "将清空本地累计的 OCR 识别张数、失败数与地图加载估算次数，无法恢复。确定继续吗？",
+            PrimaryButtonText = "重置",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            ViewModel.ResetUsageStatsCommand.Execute(null);
+        }
+    }
+
     /// <summary>适用栏目复选框切换：启用即补列迁移，停用仅隐藏界面。</summary>
     /// <param name="sender">被点击的复选框（DataContext 为该行栏目配置）。</param>
     /// <param name="e">路由事件参数。</param>

@@ -1,15 +1,19 @@
 using MaterialManagementApp.Common;
+using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using MaterialManagementApp.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Web.WebView2.Core;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 
 namespace MaterialManagementApp.Pages;
 
@@ -193,8 +197,8 @@ public sealed partial class DashboardPage : Page
     }
 
     /// <summary>
-    /// 接收 map.html 的消息：就绪信号用于推送工点数据；map-console: 前缀为前端报错转发，
-    /// 便于在 IDE 调试输出中直接看到高德鉴权失败（如 INVALID_USER_SCODE）等 console 错误。
+    /// 接收 map.html 的消息：就绪信号用于推送工点数据；map-loaded 计一次地图加载估算；
+    /// site-click: 前缀为气泡点击（弹出 WinUI 详情面板）；map-console: 前缀为前端报错转发。
     /// </summary>
     private void OnMapWebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
@@ -208,6 +212,20 @@ public sealed partial class DashboardPage : Page
                 return;
             }
 
+            // 地图脚本加载并完成初始化：本地估算一次调用（非高德官方配额数据）
+            if (string.Equals(message, "map-loaded", StringComparison.OrdinalIgnoreCase))
+            {
+                UsageStatsService.Instance.RecordMapLoad();
+                return;
+            }
+
+            const string siteClickPrefix = "site-click:";
+            if (message.StartsWith(siteClickPrefix, StringComparison.Ordinal))
+            {
+                ShowSiteDetail(message[siteClickPrefix.Length..]);
+                return;
+            }
+
             const string consolePrefix = "map-console:";
             if (message.StartsWith(consolePrefix, StringComparison.Ordinal))
             {
@@ -217,6 +235,258 @@ public sealed partial class DashboardPage : Page
         catch (Exception)
         {
             // 非文本消息（或脚本异常）忽略，地图数据会在下次刷新时重新推送
+        }
+    }
+
+    /// <summary>防止详情面板重复弹出（连点气泡时 WebMessageReceived 会多次触发）。</summary>
+    private bool _isSiteDetailOpen;
+
+    /// <summary>
+    /// 气泡点击后的工点详情面板（居中等宽弹窗）：名称、类别、状态、最近 14 天时间线、照片缩略图，
+    /// 以及「标记为已完工 / 撤销完工标记」操作。操作完成后刷新地图气泡与今日记录列表。
+    /// </summary>
+    /// <param name="siteName">工点名（与 SiteProgressDaily.SiteName 一致）。</param>
+    private async void ShowSiteDetail(string siteName)
+    {
+        if (_isSiteDetailOpen || string.IsNullOrWhiteSpace(siteName))
+        {
+            return;
+        }
+
+        _isSiteDetailOpen = true;
+        try
+        {
+            var site = SiteProgressService.Instance.BuildMapSites(DateTime.Today)
+                .FirstOrDefault(item => string.Equals(item.SiteName, siteName, StringComparison.Ordinal));
+            var statusOverride = SiteStatusService.Instance.GetOverride(siteName);
+            var isCompleted = statusOverride?.IsCompleted == true;
+            var history = DatabaseService.Instance.GetSiteProgressHistory(siteName, 14);
+
+            var panel = new StackPanel { Spacing = 10, Width = 430 };
+
+            // 状态行：色点 + 状态文案 + 连续无更新天数
+            var statusRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            statusRow.Children.Add(new Border
+            {
+                Width = 10,
+                Height = 10,
+                CornerRadius = new CornerRadius(5),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = ParseBrush(site?.ColorHex ?? "#94A3B8")
+            });
+            statusRow.Children.Add(new TextBlock
+            {
+                Text = isCompleted
+                    ? $"已完工（{FormatDateTime(statusOverride!.CompletedAt)} 标记）"
+                    : site?.StatusText ?? "在建",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+            panel.Children.Add(statusRow);
+
+            // 类别：取最近一条已定位记录的类别（没有记录时明确说明）
+            var latestRow = history.FirstOrDefault();
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"类别：{(latestRow is null ? "暂无已定位记录" : CategoryText(latestRow.Category))}",
+                FontSize = 12
+            });
+
+            if (isCompleted && !string.IsNullOrWhiteSpace(statusOverride!.Remark))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"完工备注：{statusOverride.Remark}",
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 100, 116, 139))
+                });
+            }
+
+            // 类别汇总：按日期 + 类别列出（时间线）
+            panel.Children.Add(new TextBlock
+            {
+                Text = "最近 14 天施工记录",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+
+            var timeline = new StackPanel { Spacing = 3 };
+            if (history.Count == 0)
+            {
+                timeline.Children.Add(new TextBlock { Text = "最近 14 天没有已定位的施工记录。" });
+            }
+            else
+            {
+                foreach (var group in history.GroupBy(item => new { item.Date, item.Category })
+                             .OrderByDescending(group => group.Key.Date, StringComparer.Ordinal))
+                {
+                    timeline.Children.Add(new TextBlock
+                    {
+                        Text = $"{group.Key.Date}　{CategoryText(group.Key.Category)}　{group.Sum(item => item.PhotoCount)} 张",
+                        FontSize = 12
+                    });
+                }
+            }
+
+            panel.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 150,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = timeline
+            });
+
+            // 照片缩略图：点击把下方预览区切换为该图（同一弹窗内放大，不再嵌套第二个 ContentDialog）
+            var photos = history
+                .Select(item => item.SourceFilePath)
+                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(4)
+                .ToList();
+
+            var preview = new Image
+            {
+                Width = 400,
+                Height = 220,
+                Stretch = Stretch.Uniform,
+                Visibility = Visibility.Collapsed
+            };
+
+            if (photos.Count > 0)
+            {
+                var thumbRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                foreach (var photo in photos)
+                {
+                    var image = new Image
+                    {
+                        Width = 92,
+                        Height = 68,
+                        Stretch = Stretch.UniformToFill,
+                        Source = LoadBitmap(photo, 160)
+                    };
+                    image.Tapped += (_, _) =>
+                    {
+                        preview.Source = LoadBitmap(photo, 800);
+                        preview.Visibility = Visibility.Visible;
+                    };
+                    thumbRow.Children.Add(new Border
+                    {
+                        CornerRadius = new CornerRadius(4),
+                        Child = image
+                    });
+                }
+
+                panel.Children.Add(new TextBlock { Text = "最近照片（点击放大）", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                panel.Children.Add(thumbRow);
+                panel.Children.Add(preview);
+            }
+
+            // 未完工且连续多天无更新：只提示，不自动判定完工（不做「超过 N 天自动完工」）
+            if (!isCompleted && site is not null && site.DaysSinceActivity >= 3)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"已连续 {site.DaysSinceActivity} 天无更新，如已完工请手动标记。",
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 100, 116, 139))
+                });
+            }
+
+            TextBox? remarkBox = null;
+            if (!isCompleted)
+            {
+                remarkBox = new TextBox
+                {
+                    Header = "完工备注（可选）",
+                    PlaceholderText = "例如：主体结构已完成，进入收尾",
+                    MaxLength = 200
+                };
+                panel.Children.Add(remarkBox);
+            }
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"工点详情 · {siteName}",
+                Content = new ScrollViewer
+                {
+                    MaxHeight = 560,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Content = panel
+                },
+                PrimaryButtonText = isCompleted ? "撤销完工标记" : "标记为已完工",
+                CloseButtonText = "关闭",
+                DefaultButton = ContentDialogButton.Close
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            if (isCompleted)
+            {
+                SiteStatusService.Instance.Revoke(siteName);
+            }
+            else
+            {
+                SiteStatusService.Instance.MarkCompleted(siteName, remarkBox?.Text);
+            }
+
+            // 操作后立即刷新地图气泡与今日记录（已完工变灰、撤销后恢复天数判定）
+            ViewModel.RefreshConstructionData();
+            PushMapData();
+        }
+        catch (Exception ex)
+        {
+            // async void：详情面板的任何意外只记录，不带崩进程
+            Debug.WriteLine($"[工点详情] 打开或操作失败：{ex.Message}");
+        }
+        finally
+        {
+            _isSiteDetailOpen = false;
+        }
+    }
+
+    /// <summary>类别枚举转中文展示名。</summary>
+    private static string CategoryText(SiteProgressCategory category) => category switch
+    {
+        SiteProgressCategory.EarthMaterialInbound => "地材进场",
+        SiteProgressCategory.SpoilTransfer => "渣土转运",
+        _ => "待确认"
+    };
+
+    /// <summary>把 yyyy-MM-dd HH:mm:ss 转为更短的展示文本；解析失败原样返回。</summary>
+    private static string FormatDateTime(string text) =>
+        DateTime.TryParse(text, out var value) ? value.ToString("yyyy-MM-dd HH:mm") : text;
+
+    /// <summary>按 #RRGGBB 生成画刷；解析失败回退中立灰。</summary>
+    private static SolidColorBrush ParseBrush(string? hex)
+    {
+        var value = (hex ?? string.Empty).TrimStart('#');
+        if (value.Length == 6
+            && byte.TryParse(value[..2], System.Globalization.NumberStyles.HexNumber, null, out var r)
+            && byte.TryParse(value.Substring(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)
+            && byte.TryParse(value.Substring(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b))
+        {
+            return new SolidColorBrush(Windows.UI.Color.FromArgb(255, r, g, b));
+        }
+
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(255, 100, 116, 139));
+    }
+
+    /// <summary>从本地文件加载图片为 BitmapImage；失败返回 null（缩略图位置留空，不影响面板）。</summary>
+    private static BitmapImage? LoadBitmap(string path, int decodePixelWidth)
+    {
+        try
+        {
+            return new BitmapImage
+            {
+                UriSource = new Uri(path),
+                DecodePixelWidth = decodePixelWidth
+            };
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

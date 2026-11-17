@@ -31,7 +31,7 @@ public sealed class DatabaseMigrator
     private static readonly ILogger _logger = AppLog.CreateLogger<DatabaseMigrator>();
 
     /// <summary>程序当前期望的数据库版本号。每次新增迁移脚本时递增 1。</summary>
-    public const int TargetVersion = 2;
+    public const int TargetVersion = 3;
 
     /// <summary>
     /// 增量迁移脚本：键为「起始版本」，值为该版本升级到下一版本需要顺序执行的 SQL 语句。
@@ -70,6 +70,20 @@ public sealed class DatabaseMigrator
                 Status TEXT NOT NULL DEFAULT '',
                 Message TEXT NOT NULL DEFAULT '',
                 ProcessedAt TEXT NOT NULL DEFAULT '');
+            """
+        },
+
+        // 2 → 3：工点人工状态覆盖（已完工 / 复工）。工点无独立主数据表，
+        // SiteKey 与 SiteProgressDaily.SiteName 完全一致；只新增表，幂等
+        [2] = new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS SiteStatusOverride (
+                SiteKey TEXT PRIMARY KEY,
+                Status TEXT NOT NULL DEFAULT '',
+                CompletedAt TEXT NOT NULL DEFAULT '',
+                Remark TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT '');
             """
         },
     };

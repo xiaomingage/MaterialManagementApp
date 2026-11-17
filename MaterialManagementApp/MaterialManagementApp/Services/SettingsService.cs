@@ -295,6 +295,13 @@ public sealed class SettingsService
         settings.WatermarkRootPath ??= string.Empty;
         settings.AmapJsApiKey ??= string.Empty;
         settings.AmapSecurityCode ??= string.Empty;
+        settings.ProjectDeptName ??= string.Empty;
+        settings.ProjectDeptAddress ??= string.Empty;
+        settings.ProjectDeptLng ??= string.Empty;
+        settings.ProjectDeptLat ??= string.Empty;
+        settings.WarehouseName ??= string.Empty;
+        settings.WarehouseLng ??= string.Empty;
+        settings.WarehouseLat ??= string.Empty;
         settings.OllamaUrl ??= "http://localhost:11434";
         settings.OllamaModel ??= string.Empty;
         settings.AccentColor ??= "#2563EB";
@@ -308,6 +315,18 @@ public sealed class SettingsService
         {
             settings.BackupRetentionCount = 15;
         }
+
+        // 额度上限：负数视为非法（清空为「不显示额度条」）；地图默认值由字段初始化器给出
+        if (settings.AiMonthlyCallLimit is < 0)
+        {
+            settings.AiMonthlyCallLimit = null;
+        }
+
+        if (settings.MapMonthlyQuota is < 0)
+        {
+            settings.MapMonthlyQuota = null;
+        }
+
         return settings;
     }
 

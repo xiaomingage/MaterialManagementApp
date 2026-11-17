@@ -15,6 +15,8 @@
         <common:CountToVisibilityConverter x:Key="CountToVisibility" />
         <!-- 状态提示条：有消息时才显示容器 -->
         <common:StringToVisibilityConverter x:Key="StringToVisibility" />
+        <!-- 复工行黄底提示：IsRevived 为 true 时显示背景块 -->
+        <common:BoolToVisibilityConverter x:Key="BoolToVisibility" />
     </Page.Resources>
 
     <ScrollViewer>
@@ -290,29 +292,37 @@
                             <ItemsControl ItemsSource="{x:Bind ViewModel.TodayRecords, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="models:SiteProgressDaily">
-                                        <Grid ColumnSpacing="16" Padding="0,7">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock
-                                                Text="{x:Bind SiteName}"
-                                                FontWeight="SemiBold"
-                                                TextTrimming="CharacterEllipsis" />
-                                            <TextBlock
-                                                Grid.Column="1"
-                                                Text="{x:Bind DisplayCategory}"
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock
-                                                Grid.Column="2"
-                                                Text="{x:Bind PhotoCountText}"
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock
-                                                Grid.Column="3"
-                                                Text="{x:Bind ShotAtText}"
-                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        <Grid>
+                                            <!-- 复工提示：已完工工点今日又扫到照片并自动恢复在建时，该行黄底 -->
+                                            <Border
+                                                Margin="-8,1"
+                                                CornerRadius="4"
+                                                Background="#FEF3C7"
+                                                Visibility="{x:Bind IsRevived, Converter={StaticResource BoolToVisibility}}" />
+                                            <Grid ColumnSpacing="16" Padding="0,7">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock
+                                                    Text="{x:Bind SiteNameDisplay}"
+                                                    FontWeight="SemiBold"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Text="{x:Bind DisplayCategory}"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock
+                                                    Grid.Column="2"
+                                                    Text="{x:Bind PhotoCountText}"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock
+                                                    Grid.Column="3"
+                                                    Text="{x:Bind ShotAtText}"
+                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            </Grid>
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>

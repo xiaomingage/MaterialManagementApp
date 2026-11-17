@@ -480,6 +480,17 @@ public sealed class WatermarkScannerService : IDisposable
 
         db.SaveWatermarkFileState(path, size, ticks, "Processed", siteName);
 
+        // 复工检测：已完工工点又扫到新照片时自动恢复为在建（服务内部写 Warning 日志），
+        // 不做任何静默恢复，状态变化由气泡角标与今日记录黄底提示体现
+        SiteStatusService.Instance.DetectRevival(siteName);
+
+        if (!isLocated && !string.IsNullOrWhiteSpace(text))
+        {
+            // 文本/二维码解析成功但坐标提取失败：单独打 Warning 作为异常信号，处理流程保持不变
+            Logger.LogWarning(
+                "水印文本解析成功但未提取到经纬度，记录已进入待定位池：{File}", path);
+        }
+
         Logger.LogInformation(
             "水印图片解析完成：{File} → 工点={Site}，日期={Date}，类别={Category}，定位={Located}。",
             Path.GetFileName(path), siteName, dateText, category, isLocated);

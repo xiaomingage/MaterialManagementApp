@@ -121,9 +121,15 @@ public partial class DashboardViewModel : ObservableObject
                 .ThenByDescending(row => row.LastShotAt)
                 .ToList();
 
+            // 今日复工标记：已完工工点又扫到照片并自动恢复在建时，列表该行黄底提示
+            var overrides = SiteStatusService.Instance.GetOverrides();
+            var todayDate = DateTime.Today;
+
             TodayRecords.Clear();
             foreach (var row in rows)
             {
+                row.IsRevived = overrides.TryGetValue(row.SiteName, out var statusOverride)
+                                && SiteStatusService.IsRevivedToday(statusOverride, todayDate);
                 TodayRecords.Add(row);
             }
 
@@ -139,7 +145,7 @@ public partial class DashboardViewModel : ObservableObject
             ConstructionSummary = rows.Count == 0
                 ? "暂无今日扫描记录。"
                 : $"今日扫描 {rows.Sum(row => row.PhotoCount)} 张照片，覆盖 {locatedSiteCount} 个工点；" +
-                  "状态色：绿色有作业 / 黄色停滞 1–2 天 / 红色中断 3 天以上。";
+                  "状态色：绿色作业中 / 黄色停滞 1–2 天 / 红色中断 3 天以上 / 灰色已完工。";
         }
         catch (Exception ex)
         {

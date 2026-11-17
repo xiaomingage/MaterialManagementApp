@@ -354,6 +354,46 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _amapSecurityCode = string.Empty;
 
+    // ==================== 固定位置（项目部 / 仓库，GCJ-02） ====================
+
+    /// <summary>项目部名称（地图常显标签）。</summary>
+    [ObservableProperty]
+    private string _projectDeptName = string.Empty;
+
+    /// <summary>项目部地址（可选，仅展示，不参与地图定位）。</summary>
+    [ObservableProperty]
+    private string _projectDeptAddress = string.Empty;
+
+    /// <summary>项目部经度文本（空表示未配置）。</summary>
+    [ObservableProperty]
+    private string _projectDeptLng = string.Empty;
+
+    /// <summary>项目部纬度文本（空表示未配置）。</summary>
+    [ObservableProperty]
+    private string _projectDeptLat = string.Empty;
+
+    /// <summary>仓库名称（地图常显标签）。</summary>
+    [ObservableProperty]
+    private string _warehouseName = string.Empty;
+
+    /// <summary>仓库经度文本（空表示未配置）。</summary>
+    [ObservableProperty]
+    private string _warehouseLng = string.Empty;
+
+    /// <summary>仓库纬度文本（空表示未配置）。</summary>
+    [ObservableProperty]
+    private string _warehouseLat = string.Empty;
+
+    // ==================== 统计与配额 ====================
+
+    /// <summary>AI 月度调用上限文本；留空表示不显示额度条。</summary>
+    [ObservableProperty]
+    private string _aiMonthlyCallLimitText = string.Empty;
+
+    /// <summary>地图 API 月度免费额度上限文本；留空表示隐藏额度条（默认 1500000）。</summary>
+    [ObservableProperty]
+    private string _mapMonthlyQuotaText = "1500000";
+
     /// <summary>数据库备份板块的独立提示文本（手动备份/恢复结果），与全局 StatusMessage 分开避免互相覆盖。</summary>
     [ObservableProperty]
     private string _backupStatus = string.Empty;
@@ -401,6 +441,19 @@ public partial class SettingsViewModel : ObservableObject
             WatermarkRootPath = settings.WatermarkRootPath ?? string.Empty;
             AmapJsApiKey = settings.AmapJsApiKey ?? string.Empty;
             AmapSecurityCode = settings.AmapSecurityCode ?? string.Empty;
+            ProjectDeptName = settings.ProjectDeptName ?? string.Empty;
+            ProjectDeptAddress = settings.ProjectDeptAddress ?? string.Empty;
+            ProjectDeptLng = settings.ProjectDeptLng ?? string.Empty;
+            ProjectDeptLat = settings.ProjectDeptLat ?? string.Empty;
+            WarehouseName = settings.WarehouseName ?? string.Empty;
+            WarehouseLng = settings.WarehouseLng ?? string.Empty;
+            WarehouseLat = settings.WarehouseLat ?? string.Empty;
+            AiMonthlyCallLimitText = settings.AiMonthlyCallLimit is > 0
+                ? settings.AiMonthlyCallLimit.Value.ToString()
+                : string.Empty;
+            MapMonthlyQuotaText = settings.MapMonthlyQuota is > 0
+                ? settings.MapMonthlyQuota.Value.ToString()
+                : string.Empty;
             ArchiveRootPath = settings.ArchiveRootPath ?? string.Empty;
             LogsDirectory = AppLog.LogsDirectory;
             RefreshArchivePreviews();
@@ -437,6 +490,48 @@ public partial class SettingsViewModel : ObservableObject
         if (archiveRoot.Length > 0 && !FileStorageService.TryEnsureWritable(archiveRoot, out var archiveError))
         {
             StatusMessage = $"归档根目录不可写，已取消保存：{archiveError}";
+            return;
+        }
+
+        // 固定位置坐标校验：经纬度必须成对、数值合法；名称已填但坐标为空也拒绝保存
+        var deptConfigured = GeoCoordinate.TryParsePair(
+            ProjectDeptLng, ProjectDeptLat, out _, out _, out var deptError);
+        if (deptError.Length > 0)
+        {
+            StatusMessage = $"项目部坐标无效，已取消保存：{deptError}";
+            return;
+        }
+
+        if (!deptConfigured && !string.IsNullOrWhiteSpace(ProjectDeptName))
+        {
+            StatusMessage = "项目部名称已填写，但经纬度为空，已取消保存。";
+            return;
+        }
+
+        var warehouseConfigured = GeoCoordinate.TryParsePair(
+            WarehouseLng, WarehouseLat, out _, out _, out var warehouseError);
+        if (warehouseError.Length > 0)
+        {
+            StatusMessage = $"仓库坐标无效，已取消保存：{warehouseError}";
+            return;
+        }
+
+        if (!warehouseConfigured && !string.IsNullOrWhiteSpace(WarehouseName))
+        {
+            StatusMessage = "仓库名称已填写，但经纬度为空，已取消保存。";
+            return;
+        }
+
+        // 额度上限：允许留空（隐藏额度条），非整数或负数拒绝保存
+        if (!TryParseLimit(AiMonthlyCallLimitText, out var aiMonthlyLimit, out var aiLimitError))
+        {
+            StatusMessage = $"AI 月度调用上限无效，已取消保存：{aiLimitError}";
+            return;
+        }
+
+        if (!TryParseLimit(MapMonthlyQuotaText, out var mapMonthlyQuota, out var mapQuotaError))
+        {
+            StatusMessage = $"地图 API 月度免费额度上限无效，已取消保存：{mapQuotaError}";
             return;
         }
 
@@ -478,7 +573,26 @@ public partial class SettingsViewModel : ObservableObject
             settings.AmapSecurityCode = (AmapSecurityCode ?? string.Empty).Trim();
             settings.ArchiveRootPath = archiveRoot;
 
+            // 固定位置：字符串保存时统一 trim（坐标保留用户输入原文，解析交给地图侧）
+            settings.ProjectDeptName = (ProjectDeptName ?? string.Empty).Trim();
+            settings.ProjectDeptAddress = (ProjectDeptAddress ?? string.Empty).Trim();
+            settings.ProjectDeptLng = (ProjectDeptLng ?? string.Empty).Trim();
+            settings.ProjectDeptLat = (ProjectDeptLat ?? string.Empty).Trim();
+            settings.WarehouseName = (WarehouseName ?? string.Empty).Trim();
+            settings.WarehouseLng = (WarehouseLng ?? string.Empty).Trim();
+            settings.WarehouseLat = (WarehouseLat ?? string.Empty).Trim();
+
+            // 额度上限：0 统一存为 null（隐藏额度条），避免 0 与「未配置」两种语义并存
+            settings.AiMonthlyCallLimit = aiMonthlyLimit > 0 ? aiMonthlyLimit : null;
+            settings.MapMonthlyQuota = mapMonthlyQuota > 0 ? mapMonthlyQuota : null;
+
             SettingsService.Instance.Save();
+
+            // 固定位置保存日志：只记录是否配置，不记录具体坐标值
+            _logger.LogInformation(
+                "固定位置配置已保存：项目部={Dept}，仓库={Warehouse}。",
+                deptConfigured ? "已配置坐标" : "未配置坐标",
+                warehouseConfigured ? "已配置坐标" : "未配置坐标");
 
             // 归档根改动后立即生效：确保新目录结构就绪，并记录生效路径
             var archiveRootChanged = !string.Equals(previousArchiveRoot, archiveRoot, StringComparison.OrdinalIgnoreCase);
@@ -528,6 +642,50 @@ public partial class SettingsViewModel : ObservableObject
         {
             _logger.LogError(ex, "保存应用设置失败。");
             StatusMessage = $"保存失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// 解析额度上限文本：留空返回 0（表示隐藏额度条）；非整数或负数视为非法。
+    /// </summary>
+    /// <param name="text">输入文本。</param>
+    /// <param name="value">解析结果（留空为 0）。</param>
+    /// <param name="error">非法原因；合法时为空串。</param>
+    /// <returns>合法返回 true。</returns>
+    private static bool TryParseLimit(string? text, out int value, out string error)
+    {
+        value = 0;
+        error = string.Empty;
+
+        var trimmed = (text ?? string.Empty).Trim().Replace(",", string.Empty);
+        if (trimmed.Length == 0)
+        {
+            return true;
+        }
+
+        if (!int.TryParse(trimmed, out value) || value < 0)
+        {
+            error = "请填写非负整数，或留空表示不显示额度条。";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>重置本地使用统计（OCR / 地图加载估算）。二次确认由设置页按钮负责。</summary>
+    [RelayCommand]
+    private void ResetUsageStats()
+    {
+        try
+        {
+            UsageStatsService.Instance.ResetAll();
+            StatusMessage = "本地统计数据已清零（OCR 识别与地图加载估算）。";
+            _logger.LogInformation("用户已重置本地使用统计（OCR / 地图加载估算）。");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "重置本地使用统计失败。");
+            StatusMessage = $"重置统计失败：{ex.Message}";
         }
     }
 

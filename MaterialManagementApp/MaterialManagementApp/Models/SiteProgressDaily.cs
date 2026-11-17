@@ -67,6 +67,17 @@ public sealed class SiteProgressDaily
     /// <summary>最后更新时间，格式 yyyy-MM-dd HH:mm:ss。</summary>
     public string UpdatedAt { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 该工点今日是否检测到复工（已完工后又扫到新照片）。仅用于今日记录列表的黄底与角标提示，
+    /// 不落库、不参与任何业务计算，因此不参与数据库映射。
+    /// </summary>
+    [JsonIgnore]
+    public bool IsRevived { get; set; }
+
+    /// <summary>工点展示名：今日复工的记录追加「（复工）」角标文本。</summary>
+    [JsonIgnore]
+    public string SiteNameDisplay => IsRevived ? $"{SiteName}（复工）" : SiteName;
+
     /// <summary>类别中文名，供界面与气泡展示。</summary>
     [JsonIgnore]
     public string CategoryText => Category switch
@@ -121,4 +132,34 @@ public sealed class SiteProgressMapSite
 
     /// <summary>最近一次拍摄时间，供气泡副标题使用。</summary>
     public string LastShotAt { get; set; } = string.Empty;
+
+    /// <summary>人工标记的已完工状态：优先于天数判定，不参与任何天数告警。</summary>
+    public bool IsCompleted { get; set; }
+
+    /// <summary>今日检测到复工（已完工后又扫到照片），气泡显示「复工」角标。</summary>
+    public bool IsRevived { get; set; }
+
+    /// <summary>
+    /// 机器可读的生命周期状态：working（作业中）/ stalled（停滞）/ interrupted（中断）/ completed（已完工）。
+    /// 供前端按状态做样式分支，文案仍以 <see cref="StatusText"/> 为准。
+    /// </summary>
+    public string LifecycleStatus { get; set; } = "working";
 }
+
+/// <summary>
+/// 地图中心点与缩放级别。由 C# 侧统一计算后推送给 map.html，前端只消费、不自行推断。
+/// </summary>
+/// <param name="Lng">中心点经度（GCJ-02）。</param>
+/// <param name="Lat">中心点纬度（GCJ-02）。</param>
+/// <param name="Zoom">缩放级别。</param>
+public sealed record MapCenter(double Lng, double Lat, int Zoom);
+
+/// <summary>
+/// 地图固定参照点（项目部 / 仓库）。不属于工点，不参与状态判定与今日施工记录。
+/// </summary>
+/// <param name="Type">projectDept 或 warehouse。</param>
+/// <param name="Name">显示名称。</param>
+/// <param name="Lng">经度（GCJ-02）。</param>
+/// <param name="Lat">纬度（GCJ-02）。</param>
+public sealed record MapFixedPoint(string Type, string Name, double Lng, double Lat);
+

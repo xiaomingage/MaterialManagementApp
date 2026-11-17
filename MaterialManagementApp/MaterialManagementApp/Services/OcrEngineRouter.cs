@@ -36,6 +36,35 @@ public static class OcrEngineRouter
         int height,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            var result = await RecognizeCoreAsync(imageBytes, bgra, width, height, cancellationToken)
+                .ConfigureAwait(false);
+
+            // 轻量计数器：仅累加本地统计（状态栏仪表盘），不写日志、不参与业务判定
+            UsageStatsService.Instance.RecordOcrSuccess();
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // 所有引擎均失败：失败计数后原样抛出，保持既有异常处理流程
+            UsageStatsService.Instance.RecordOcrFailure();
+            throw;
+        }
+    }
+
+    /// <summary>实际路由逻辑（原 RecognizeAsync 主体），由外层统一做成功/失败计数。</summary>
+    private static async Task<OcrEngineResult> RecognizeCoreAsync(
+        byte[]? imageBytes,
+        byte[] bgra,
+        int width,
+        int height,
+        CancellationToken cancellationToken)
+    {
         var settings = SettingsService.Instance.Settings;
         var mode = settings.OcrEngineMode ?? string.Empty;
         var hasImage = imageBytes is { Length: > 0 };
@@ -62,6 +91,9 @@ public static class OcrEngineRouter
             {
                 try
                 {
+                    // 在线 AI 调用计数（含失败回退的前一次尝试），仅用于本地用量统计
+                    UsageStatsService.Instance.RecordAiCall();
+
                     var text = await OnlineAiService.Instance.RecognizeImageAsync(
                         settings.AiBaseUrl, settings.AiApiKey, settings.AiModelName, imageBytes!,
                         // 豆包 seed 系列默认可能输出深度思考内容，混入正文会破坏 JSON 字段解析，需显式关闭

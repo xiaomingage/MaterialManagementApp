@@ -165,6 +165,36 @@ public sealed class AppSettings
     /// <summary>高德地图 JS API 安全密钥（2021 年后申请的应用需配合 Key 使用，可选）。</summary>
     public string AmapSecurityCode { get; set; } = string.Empty;
 
+    /// <summary>项目部固定参照点名称（地图常显标签）。</summary>
+    public string ProjectDeptName { get; set; } = string.Empty;
+
+    /// <summary>项目部地址，仅用于设置页展示，不上图、不做地理编码。</summary>
+    public string ProjectDeptAddress { get; set; } = string.Empty;
+
+    /// <summary>项目部经度（GCJ-02 高德坐标）；与纬度同时为空表示未配置。</summary>
+    public string ProjectDeptLng { get; set; } = string.Empty;
+
+    /// <summary>项目部纬度（GCJ-02 高德坐标）。</summary>
+    public string ProjectDeptLat { get; set; } = string.Empty;
+
+    /// <summary>仓库固定参照点名称（地图常显标签）。</summary>
+    public string WarehouseName { get; set; } = string.Empty;
+
+    /// <summary>仓库经度（GCJ-02 高德坐标）；与纬度同时为空表示未配置。</summary>
+    public string WarehouseLng { get; set; } = string.Empty;
+
+    /// <summary>仓库纬度（GCJ-02 高德坐标）。</summary>
+    public string WarehouseLat { get; set; } = string.Empty;
+
+    /// <summary>在线 AI 月度调用上限（状态栏额度条用）；null 或 0 表示不显示额度条。</summary>
+    public int? AiMonthlyCallLimit { get; set; }
+
+    /// <summary>
+    /// 地图 API 月度免费额度上限（本地估算用，默认 1,500,000）。
+    /// null 或 0 表示不显示额度条；该值只用于展示，不参与任何业务阻断。
+    /// </summary>
+    public int? MapMonthlyQuota { get; set; } = 1500000;
+
     /// <summary>当前 AI 服务商是否为本地 Ollama；否则视为在线 AI 服务商。</summary>
     [JsonIgnore]
     public bool IsOllamaProvider =>

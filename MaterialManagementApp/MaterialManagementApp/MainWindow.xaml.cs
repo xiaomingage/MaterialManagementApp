@@ -11,6 +11,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using WinRT.Interop;
 
 namespace MaterialManagementApp;
@@ -65,6 +66,7 @@ public sealed partial class MainWindow : Window
 
         UpdateClock();
         UpdateStatusBar();
+        UpdateGauges();
 
         // 左下角版本号（可点击检查更新）：文本统一取自 AppInfo.CurrentVersion，
         // 版本号唯一来源是 csproj 的 <Version>，XAML 与代码里都不写死字面量
@@ -197,13 +199,79 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
-    /// <summary>计时器回调：刷新时钟文本。</summary>
+    /// <summary>计时器回调：刷新时钟文本与两个统计仪表盘。</summary>
     /// <param name="sender">计时器实例。</param>
     /// <param name="e">事件参数。</param>
     private void OnClockTick(object? sender, object e)
     {
         UpdateClock();
+        UpdateGauges();
     }
+
+    /// <summary>
+    /// 刷新状态栏左侧的 OCR 与地图估算仪表盘。
+    /// 数据来自 <see cref="UsageStatsService"/> 的内存快照（扫描批次累加、非逐张刷新），
+    /// 地图仪表盘必须带「估算」字样：高德 JS API 调用发生在浏览器端，客户端拿不到官方配额余量。
+    /// </summary>
+    private void UpdateGauges()
+    {
+        try
+        {
+            var stats = UsageStatsService.Instance.Snapshot();
+            var settings = SettingsService.Instance.Settings;
+
+            // 在线 AI 档且配置完整时才展示调用次数；其余情况展示本地 OCR 今日张数/失败数
+            var isRemoteAi = string.Equals(settings.OcrEngineMode, "OnlineAi", StringComparison.OrdinalIgnoreCase)
+                             && settings.IsAiConfigured
+                             && !settings.IsOllamaProvider;
+
+            if (isRemoteAi)
+            {
+                // 在线 AI：展示今日/本月调用次数；配置了月度上限时附加额度，留空则不显示
+                var aiLimit = settings.AiMonthlyCallLimit ?? 0;
+                OcrGaugeText.Text = aiLimit > 0
+                    ? $"OCR·{settings.AiProvider} 今日 {stats.AiTodayCalls} · 本月 {stats.AiMonthCalls} / {FormatQuota(aiLimit)}"
+                    : $"OCR·{settings.AiProvider} 今日 {stats.AiTodayCalls} · 本月 {stats.AiMonthCalls}";
+            }
+            else
+            {
+                OcrGaugeText.Text = $"OCR·本地 今日 {stats.OcrTodaySuccess} / 失败 {stats.OcrTodayFail}";
+            }
+
+            var quota = settings.MapMonthlyQuota ?? 0;
+            MapGaugeText.Text = quota > 0
+                ? $"地图·本月 估算 {stats.MapMonthLoads:N0} / {FormatQuota(quota)}"
+                : $"地图·本月 估算 {stats.MapMonthLoads:N0}";
+
+            if (quota > 0)
+            {
+                var percent = Math.Min(100, stats.MapMonthLoads * 100.0 / quota);
+                MapQuotaBar.Value = percent;
+                MapQuotaBar.Visibility = Visibility.Visible;
+                // 仅视觉提示：< 60% 中性、60%–85% 黄、> 85% 红，不做任何阻断
+                MapQuotaBar.Foreground = new SolidColorBrush(percent > 85
+                    ? Windows.UI.Color.FromArgb(255, 239, 68, 68)
+                    : percent >= 60
+                        ? Windows.UI.Color.FromArgb(255, 245, 158, 11)
+                        : Windows.UI.Color.FromArgb(255, 100, 116, 139));
+            }
+            else
+            {
+                MapQuotaBar.Visibility = Visibility.Collapsed;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 仪表盘读取失败不影响主界面与业务操作，只在调试输出留痕
+            System.Diagnostics.Debug.WriteLine($"[MainWindow] 刷新统计仪表盘失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>把额度上限格式化为更紧凑的展示文本（1,500,000 → 150万）。</summary>
+    /// <param name="quota">月度上限。</param>
+    /// <returns>展示文本。</returns>
+    private static string FormatQuota(int quota) =>
+        quota >= 10000 ? $"{quota / 10000.0:0.#}万" : quota.ToString("N0");
 
     /// <summary>把当前时间格式化为 yyyy-MM-dd HH:mm:ss 星期X 并写入状态栏右侧。</summary>
     private void UpdateClock()

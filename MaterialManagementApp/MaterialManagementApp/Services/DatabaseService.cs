@@ -271,6 +271,14 @@ CREATE TABLE IF NOT EXISTS WatermarkScannedFile (
     Status TEXT NOT NULL DEFAULT '',
     Message TEXT NOT NULL DEFAULT '',
     ProcessedAt TEXT NOT NULL DEFAULT '');
+
+-- 工点人工状态覆盖（已完工 / 复工）：工点无独立主数据表，SiteKey 与 SiteProgressDaily.SiteName 一致
+CREATE TABLE IF NOT EXISTS SiteStatusOverride (
+    SiteKey TEXT PRIMARY KEY,
+    Status TEXT NOT NULL DEFAULT '',
+    CompletedAt TEXT NOT NULL DEFAULT '',
+    Remark TEXT NOT NULL DEFAULT '',
+    UpdatedAt TEXT NOT NULL DEFAULT '');
 ";
 
     private static readonly Lazy<DatabaseService> _instance = new(() => new DatabaseService());
@@ -829,6 +837,106 @@ CREATE TABLE IF NOT EXISTS WatermarkScannedFile (
     /// <returns>待定位记录数。</returns>
     public int CountPendingLocationProgress() =>
         (int)ExecuteScalarCount("SELECT COUNT(*) FROM SiteProgressDaily WHERE IsLocated = 0;");
+
+    // ==================== 工点人工状态覆盖（已完工 / 复工） ====================
+
+    /// <summary>
+    /// 读取全部工点状态覆盖行，供地图聚合时按 SiteKey 左连接。
+    /// </summary>
+    /// <returns>覆盖行列表；表为空时返回空集合。</returns>
+    public List<SiteStatusOverride> GetSiteStatusOverrides()
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT SiteKey, Status, CompletedAt, Remark, UpdatedAt FROM SiteStatusOverride;";
+
+        var results = new List<SiteStatusOverride>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(new SiteStatusOverride
+            {
+                SiteKey = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                Status = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                CompletedAt = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                Remark = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                UpdatedAt = reader.IsDBNull(4) ? string.Empty : reader.GetString(4)
+            });
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// 写入或更新一条工点状态覆盖（按 SiteKey 唯一）。
+    /// </summary>
+    /// <param name="row">覆盖行（SiteKey 必须与 SiteProgressDaily.SiteName 完全一致）。</param>
+    public void SaveSiteStatusOverride(SiteStatusOverride row)
+    {
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO SiteStatusOverride (SiteKey, Status, CompletedAt, Remark, UpdatedAt)
+            VALUES (@siteKey, @status, @completedAt, @remark, @updatedAt)
+            ON CONFLICT(SiteKey) DO UPDATE SET
+                Status = excluded.Status,
+                CompletedAt = excluded.CompletedAt,
+                Remark = excluded.Remark,
+                UpdatedAt = excluded.UpdatedAt;
+            """;
+        command.Parameters.AddWithValue("@siteKey", row.SiteKey);
+        command.Parameters.AddWithValue("@status", row.Status ?? string.Empty);
+        command.Parameters.AddWithValue("@completedAt", row.CompletedAt ?? string.Empty);
+        command.Parameters.AddWithValue("@remark", row.Remark ?? string.Empty);
+        command.Parameters.AddWithValue(
+            "@updatedAt",
+            string.IsNullOrWhiteSpace(row.UpdatedAt)
+                ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                : row.UpdatedAt);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>删除工点状态覆盖行（撤销完工标记后恢复按天数判定）。</summary>
+    /// <param name="siteKey">工点聚合键。</param>
+    public void DeleteSiteStatusOverride(string siteKey) =>
+        ExecuteNonQuery(
+            "DELETE FROM SiteStatusOverride WHERE SiteKey = @siteKey;",
+            new Dictionary<string, object?> { ["@siteKey"] = siteKey });
+
+    /// <summary>
+    /// 查询某工点最近 N 天的已定位施工记录，供详情面板时间线使用（按日期与拍摄时间倒序）。
+    /// </summary>
+    /// <param name="siteName">工点名。</param>
+    /// <param name="days">回溯天数（最小 1 天）。</param>
+    /// <returns>记录列表；无记录时返回空集合。</returns>
+    public List<SiteProgressDaily> GetSiteProgressHistory(string siteName, int days)
+    {
+        var fromDate = DateTime.Today
+            .AddDays(-(Math.Max(1, days) - 1))
+            .ToString("yyyy-MM-dd");
+
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT * FROM SiteProgressDaily
+            WHERE SiteName = @site AND IsLocated = 1 AND "Date" >= @fromDate
+            ORDER BY "Date" DESC, LastShotAt DESC;
+            """;
+        command.Parameters.AddWithValue("@site", siteName);
+        command.Parameters.AddWithValue("@fromDate", fromDate);
+
+        var results = new List<SiteProgressDaily>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(ReadSiteProgress(reader));
+        }
+
+        return results;
+    }
 
     /// <summary>
     /// 判断水印图片是否已处理：路径、文件大小与最后修改时间一致且处理成功才视为已处理。

@@ -30,7 +30,48 @@
             color: #0f172a;
             white-space: nowrap;
             user-select: none;
-            cursor: default;
+            cursor: pointer;
+        }
+
+        /* 复工角标：已完工工点再次扫到照片后，气泡右上角提示 */
+        .bubble-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 4px;
+            border-radius: 3px;
+            background: #FEF3C7;
+            color: #B45309;
+            font-size: 10px;
+            font-weight: 600;
+            vertical-align: 1px;
+        }
+
+        /* 固定参照点（项目部 / 仓库）：独立 Marker，不复用工点气泡样式，不参与状态色 */
+        .fixed-marker {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            pointer-events: none;
+        }
+
+        .fixed-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid #ffffff;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, .6), 0 4px 10px rgba(15, 23, 42, .28);
+        }
+
+        .fixed-label {
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, .94);
+            border: 1px solid rgba(15, 23, 42, .08);
+            box-shadow: 0 2px 6px rgba(15, 23, 42, .18);
+            font-size: 11px;
+            color: #0f172a;
+            white-space: nowrap;
         }
 
         .bubble-name {
@@ -118,9 +159,10 @@
     <div id="map"></div>
     <div id="hint" class="hint hidden"></div>
     <div class="legend">
-        <span class="legend-item"><i class="legend-dot" style="background:#10B981"></i>有作业</span>
+        <span class="legend-item"><i class="legend-dot" style="background:#10B981"></i>作业中</span>
         <span class="legend-item"><i class="legend-dot" style="background:#F59E0B"></i>停滞 1–2 天</span>
         <span class="legend-item"><i class="legend-dot" style="background:#EF4444"></i>中断 3 天以上</span>
+        <span class="legend-item"><i class="legend-dot" style="background:#64748B"></i>已完工</span>
     </div>
 
     <script>
@@ -166,9 +208,23 @@
 
             let map = null;
             let markers = [];
+            let fixedMarkers = [];
             let amapReady = false;
             let scriptLoading = false;
             let siteData = [];
+            let fixedPoints = [];
+            let pendingCenter = null;
+
+            // 向宿主发送纯文本消息（复工、地图加载计数、气泡点击都走这里）
+            function postToHost(message) {
+                try {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage(message);
+                    }
+                } catch (e) {
+                    // 宿主通道不可用时忽略
+                }
+            }
 
             // 与宿主建立双向通道：先告知已就绪，后续只接收工点数据（Key 不再走消息注入）
             if (window.chrome && window.chrome.webview) {
@@ -205,6 +261,9 @@
                     amapReady = true;
                     initMap();
                     renderSites();
+
+                    // 地图初始化并成功加载脚本后通知 C# 记一次「地图加载估算」（每月免费额度本地统计用）
+                    postToHost('map-loaded');
                 };
                 script.onerror = function () {
                     scriptLoading = false;
@@ -219,10 +278,32 @@
                 }
 
                 siteData = Array.isArray(data.sites) ? data.sites : [];
+                fixedPoints = Array.isArray(data.fixedPoints) ? data.fixedPoints : [];
+                pendingCenter = normalizeCenter(data.center);
 
                 if (amapReady) {
                     renderSites();
                 }
+            }
+
+            // 中心点由 C# 统一计算：{ lng, lat, zoom } 或 null（null 时沿用默认中心/自动缩放）
+            function normalizeCenter(center) {
+                if (!center || typeof center !== 'object') {
+                    return null;
+                }
+
+                const lng = Number(center.lng);
+                const lat = Number(center.lat);
+                if (!isFinite(lng) || !isFinite(lat) || (lng === 0 && lat === 0)) {
+                    return null;
+                }
+
+                let zoom = Number(center.zoom);
+                if (!isFinite(zoom) || zoom <= 0) {
+                    zoom = 12;
+                }
+
+                return { lng: lng, lat: lat, zoom: zoom };
             }
 
             function initMap() {
@@ -230,10 +311,15 @@
                     return;
                 }
 
+                const initialCenter = pendingCenter
+                    ? [pendingCenter.lng, pendingCenter.lat]
+                    : DEFAULT_CENTER;
+                const initialZoom = pendingCenter ? pendingCenter.zoom : 12;
+
                 map = new AMap.Map(mapEl, {
                     viewMode: '2D',
-                    zoom: 12,
-                    center: DEFAULT_CENTER,
+                    zoom: initialZoom,
+                    center: initialCenter,
                     mapStyle: 'whitesmoke'
                 });
 
@@ -250,9 +336,12 @@
                 }
 
                 clearMarkers();
+                // 固定参照点独立渲染：即使没有工点也要显示，zIndex 高于工点气泡
+                renderFixedPoints();
 
                 if (siteData.length === 0) {
                     showHint('暂无带经纬度的工点记录：扫描到水印照片后会自动上图，未识别坐标的照片保留在「待定位池」。');
+                    applyView();
                     return;
                 }
 
@@ -277,17 +366,81 @@
 
                 if (markers.length === 0) {
                     showHint('暂无有效坐标的工点记录。');
+                    applyView();
                     return;
                 }
 
                 map.add(markers);
+                applyView();
+            }
 
-                // 单点直接放大到街道级，多点自动缩放到全部气泡可见
+            // 视野优先级：C# 下发的 center（项目部或工点均值）> 单点街道级 > 多点自适应
+            function applyView() {
+                if (!map) {
+                    return;
+                }
+
+                if (pendingCenter) {
+                    map.setZoomAndCenter(pendingCenter.zoom, [pendingCenter.lng, pendingCenter.lat]);
+                    return;
+                }
+
                 if (markers.length === 1) {
                     map.setZoomAndCenter(15, markers[0].getPosition());
-                } else {
+                } else if (markers.length > 1) {
                     map.setFitView(markers, false, [80, 80, 80, 80], 15);
                 }
+            }
+
+            // 固定参照点：蓝（项目部）/ 橙（仓库）圆点 + 常显名称，不绑定 click、不参与状态色
+            function renderFixedPoints() {
+                clearFixedMarkers();
+
+                fixedPoints.forEach(function (point) {
+                    const lng = Number(point.lng);
+                    const lat = Number(point.lat);
+                    if (!isFinite(lng) || !isFinite(lat) || (lng === 0 && lat === 0)) {
+                        return;
+                    }
+
+                    fixedMarkers.push(new AMap.Marker({
+                        position: [lng, lat],
+                        content: buildFixedMarker(point),
+                        anchor: 'top-center',
+                        offset: new AMap.Pixel(0, -7),
+                        zIndex: 300,
+                        title: point.name || '固定位置'
+                    }));
+                });
+
+                if (fixedMarkers.length > 0) {
+                    map.add(fixedMarkers);
+                }
+            }
+
+            function clearFixedMarkers() {
+                if (map && fixedMarkers.length > 0) {
+                    map.remove(fixedMarkers);
+                }
+                fixedMarkers = [];
+            }
+
+            function buildFixedMarker(point) {
+                const isDept = point.type === 'projectDept';
+                const wrapper = document.createElement('div');
+                wrapper.className = 'fixed-marker';
+
+                const dot = document.createElement('div');
+                dot.className = 'fixed-dot';
+                dot.style.background = isDept ? '#2563EB' : '#F97316';
+
+                const label = document.createElement('div');
+                label.className = 'fixed-label';
+                label.textContent = point.name || (isDept ? '项目部' : '仓库');
+
+                wrapper.appendChild(dot);
+                wrapper.appendChild(label);
+                return wrapper;
             }
 
             function clearMarkers() {
@@ -301,10 +454,19 @@
                 const wrapper = document.createElement('div');
                 wrapper.className = 'bubble';
                 wrapper.style.setProperty('--status', site.colorHex || '#10B981');
+                wrapper.title = '点击查看工点详情';
 
                 const name = document.createElement('div');
                 name.className = 'bubble-name';
                 name.textContent = site.siteName || '未命名工点';
+
+                // 复工角标：已完工工点再次扫到照片并自动恢复在建
+                if (site.isRevived) {
+                    const badge = document.createElement('span');
+                    badge.className = 'bubble-badge';
+                    badge.textContent = '复工';
+                    name.appendChild(badge);
+                }
 
                 const progress = document.createElement('div');
                 progress.className = 'bubble-progress';
@@ -312,10 +474,18 @@
 
                 const status = document.createElement('div');
                 status.className = 'bubble-status';
-                status.textContent = site.statusText || '有作业';
+                status.textContent = site.statusText || '作业中';
 
                 const tail = document.createElement('i');
                 tail.className = 'bubble-tail';
+
+                // 气泡 click 通知 C#：由 WinUI 侧弹出详情面板（高德 InfoWindow 放不下按钮与照片）
+                wrapper.addEventListener('click', function (event) {
+                    if (event && event.stopPropagation) {
+                        event.stopPropagation();
+                    }
+                    postToHost('site-click:' + (site.siteName || ''));
+                });
 
                 wrapper.appendChild(name);
                 wrapper.appendChild(progress);
