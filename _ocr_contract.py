@@ -1,16 +1,29 @@
 """OCR 提取合同扫描件（无文字层 PDF）。
 
 流程：pypdfium2 渲染每页为高清位图 -> pytesseract(chi_sim) 识别 -> 输出全文。
+
+用法：
+    python _ocr_contract.py <合同 PDF 路径>
+
+可选环境变量：
+    TESSDATA_DIR  tessdata 目录；不设置时使用 tesseract 默认语言包位置。
 """
+import os
+import sys
+
 import pypdfium2 as pdfium
 import pytesseract
 from PIL import Image
 
-PDF_PATH = r"c:\Users\xm\Desktop\新建文件夹\物资管理\采购合同\梧州地材采购合同-诚泰建筑工程有限公司2026-06- 04.pdf"
-TESSDATA_DIR = r"C:\Users\xm\AppData\Local\tessdata"
-TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if len(sys.argv) < 2:
+    sys.exit("用法：python _ocr_contract.py <合同 PDF 路径>")
 
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_EXE
+PDF_PATH = sys.argv[1]
+TESSDATA_DIR = os.environ.get("TESSDATA_DIR", "").strip()
+OCR_CONFIG = "--psm 6" if not TESSDATA_DIR else f"--tessdata-dir {TESSDATA_DIR} --psm 6"
+
+if not os.path.isfile(PDF_PATH):
+    sys.exit(f"文件不存在：{PDF_PATH}")
 
 pdf = pdfium.PdfDocument(PDF_PATH)
 print(f"PAGES = {len(pdf)}")
@@ -22,11 +35,7 @@ for i in range(len(pdf)):
     img: Image.Image = bitmap.to_pil()
     # 转灰度可略微提升 tesseract 稳定性
     img = img.convert("L")
-    text = pytesseract.image_to_string(
-        img,
-        lang="chi_sim",
-        config=f"--tessdata-dir {TESSDATA_DIR} --psm 6",
-    )
+    text = pytesseract.image_to_string(img, lang="chi_sim", config=OCR_CONFIG)
     print(f"\n===== PAGE {i+1} OCR =====")
     print(text)
 
