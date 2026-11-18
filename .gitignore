@@ -18,8 +18,13 @@
 *.db-wal
 *.db-shm
 *.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 Logs/
 *.log
+Temp/
+OcrCache/
 
 # ===== 安装包输出 =====
 # dotnet publish 产物与 Inno Setup 安装包：体积大且可由脚本重建，
