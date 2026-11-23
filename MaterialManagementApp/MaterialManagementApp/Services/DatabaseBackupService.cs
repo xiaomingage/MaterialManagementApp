@@ -103,6 +103,121 @@ public sealed class DatabaseBackupService
         }
     }
 
+    /// <summary>每日自动备份保留天数。</summary>
+    private const int DailyBackupRetentionDays = 30;
+
+    /// <summary>
+    /// 每日自动备份：当天尚未备份时复制一份到 Backup\daily\yyyyMMdd.db，并清理 30 天前的旧文件。
+    /// 失败只写 Warning 日志并返回 null，绝不阻塞启动。
+    /// </summary>
+    /// <param name="dbPath">当前数据库文件完整路径。</param>
+    /// <returns>当天备份文件路径（当天已备份时直接返回已有路径）；失败返回 null。</returns>
+    public static string? CreateDailyBackupIfNeeded(string dbPath)
+    {
+        try
+        {
+            if (!File.Exists(dbPath))
+            {
+                _logger.LogWarning("每日备份被跳过：库文件不存在。路径={Path}", dbPath);
+                return null;
+            }
+
+            Directory.CreateDirectory(AppPaths.BackupDailyDir);
+
+            var destination = Path.Combine(
+                AppPaths.BackupDailyDir, $"{DateTime.Now:yyyyMMdd}.db");
+
+            if (File.Exists(destination))
+            {
+                // 今天已备份过：静默跳过，不写日志避免每次启动刷屏
+                return destination;
+            }
+
+            using (var source = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly"))
+            using (var target = new SqliteConnection($"Data Source={destination}"))
+            {
+                source.Open();
+                target.Open();
+                source.BackupDatabase(target);
+            }
+
+            _logger.LogInformation(
+                "每日自动备份完成：{Date} -> {Destination}", DateTime.Now.ToString("yyyy-MM-dd"), destination);
+
+            CleanupDailyBackups();
+            return destination;
+        }
+        catch (Exception ex)
+        {
+            // 备份属于附加保障：失败只记 Warning，不向用户弹窗、不阻断启动
+            _logger.LogWarning(ex, "每日自动备份失败：{Path}", dbPath);
+            return null;
+        }
+    }
+
+    /// <summary>清理 Backup\daily 下超过保留天数的旧备份。</summary>
+    private static void CleanupDailyBackups()
+    {
+        try
+        {
+            if (!Directory.Exists(AppPaths.BackupDailyDir))
+            {
+                return;
+            }
+
+            var threshold = DateTime.Today.AddDays(-DailyBackupRetentionDays);
+            foreach (var file in Directory.GetFiles(AppPaths.BackupDailyDir, "*.db"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var date = DateTime.TryParseExact(name, "yyyyMMdd", null,
+                    System.Globalization.DateTimeStyles.None, out var parsed)
+                    ? parsed
+                    : File.GetLastWriteTime(file);
+
+                if (date >= threshold)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    File.Delete(file);
+                    _logger.LogInformation("已清理过期每日备份：{Path}", file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "清理过期每日备份失败：{Path}", file);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "清理过期每日备份时发生异常。");
+        }
+    }
+
+    /// <summary>最近一次备份时间（含手动备份与每日备份）；目录为空时返回 null。</summary>
+    public static DateTime? GetLastBackupTime()
+    {
+        try
+        {
+            if (!Directory.Exists(AppPaths.BackupDir))
+            {
+                return null;
+            }
+
+            var files = Directory.GetFiles(AppPaths.BackupDir, "*.db", SearchOption.AllDirectories);
+            return files.Length == 0
+                ? null
+                : files.Max(File.GetLastWriteTime);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "读取最近备份时间失败。");
+            return null;
+        }
+    }
+
     /// <summary>
     /// 从指定备份文件恢复数据库：先把当前库再做一次安全备份，然后用备份内容覆盖。
     /// </summary>

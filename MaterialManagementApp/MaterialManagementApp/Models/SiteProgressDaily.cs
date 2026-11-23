@@ -133,6 +133,9 @@ public sealed class SiteProgressMapSite
     /// <summary>最近一次拍摄时间，供气泡副标题使用。</summary>
     public string LastShotAt { get; set; } = string.Empty;
 
+    /// <summary>气泡一句话摘要：最近一次作业的时间描述 + 类别，如「3天前 · 地材进场」。</summary>
+    public string ActivitySummary { get; set; } = string.Empty;
+
     /// <summary>人工标记的已完工状态：优先于天数判定，不参与任何天数告警。</summary>
     public bool IsCompleted { get; set; }
 

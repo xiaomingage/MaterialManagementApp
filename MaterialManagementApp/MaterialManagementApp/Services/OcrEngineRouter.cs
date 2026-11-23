@@ -21,6 +21,24 @@ public static class OcrEngineRouter
     private static readonly ILogger Logger = AppLog.CreateLogger(typeof(OcrEngineRouter));
 
     /// <summary>
+    /// 离线 OCR 引擎是否可用：检查随程序分发的 Sdcb.SimdPaddleOCR 程序集能否被解析。
+    /// 离线引擎是内嵌模型，没有外部可执行文件或模型路径需要校验，程序集缺失（安装不完整）是唯一现实故障。
+    /// </summary>
+    /// <returns>程序集可解析返回 true。</returns>
+    public static bool IsEngineAvailable()
+    {
+        try
+        {
+            return Type.GetType("Sdcb.SimdPaddleOCR.PaddleOcrAll, Sdcb.SimdPaddleOCR") is not null;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+
+    /// <summary>
     /// 按当前设置执行一次单据识别。
     /// </summary>
     /// <param name="imageBytes">图片原始字节（在线 AI / Ollama 视觉识别必需；为空时跳过 AI 引擎直接离线识别）。</param>

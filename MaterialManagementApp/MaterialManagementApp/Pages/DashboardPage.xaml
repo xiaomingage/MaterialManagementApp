@@ -23,6 +23,30 @@
         <StackPanel Padding="24" Spacing="20">
             <TextBlock Text="工作台" Style="{ThemeResource TitleTextBlockStyle}" />
 
+            <!-- 启动自检提示条：任一自检项失败时显示，可关闭，不阻塞其他功能 -->
+            <Border
+                Padding="14,10"
+                CornerRadius="6"
+                Background="#FEF3C7"
+                Visibility="{x:Bind ViewModel.IsStartupWarningVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        Text="{x:Bind ViewModel.StartupWarning, Mode=OneWay}"
+                        Foreground="#92400E"
+                        TextWrapping="Wrap"
+                        VerticalAlignment="Center" />
+                    <Button
+                        Grid.Column="1"
+                        Content="知道了"
+                        Click="OnDismissStartupWarningClick"
+                        VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
             <!-- 上部：台账概况 -->
             <StackPanel Spacing="12">
                 <TextBlock Text="台账概况" Style="{ThemeResource SubtitleTextBlockStyle}" />
@@ -255,6 +279,15 @@
                     Style="{StaticResource StatCardBorderStyle}">
                     <Grid CornerRadius="8">
                         <WebView2 x:Name="ProgressMap" Loaded="OnProgressMapLoaded" />
+                        <!-- 地图加载占位：先显示骨架文案，地图就绪后隐藏，避免区域空白 -->
+                        <TextBlock
+                            x:Name="MapLoadingText"
+                            Text="地图加载中…"
+                            Margin="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Style="{ThemeResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                         <!-- WebView2 运行时缺失或初始化失败时的兜底提示 -->
                         <TextBlock
                             x:Name="MapErrorText"
@@ -273,7 +306,17 @@
 
             <!-- 今日施工记录：展示数据库中的当日扫描结果（含不可上图的待定位照片） -->
             <StackPanel Spacing="12">
-                <TextBlock Text="今日施工记录" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <Grid>
+                    <TextBlock Text="今日施工记录" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <!-- 扫描进度：一行文本，完成后短暂展示再隐藏 -->
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ScanProgressText, Mode=OneWay}"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Visibility="{x:Bind ViewModel.IsScanProgressVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
                 <Border Style="{StaticResource StatCardBorderStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock

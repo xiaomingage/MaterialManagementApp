@@ -37,6 +37,8 @@ public sealed class SiteProgressService
     /// <summary>
     /// 生成推送给高德地图 WebView2 的 JSON：工点点位 + 固定参照点 + 中心点。
     /// 高德 Key 与安全密钥走 URL 查询参数注入（见 DashboardPage 与 map.html），不在此重复传递。
+    /// 数据契约：这里只输出地图无关的通用字段（type / generatedAt / center / fixedPoints / sites），
+    /// 高德专有的 marker 配置、InfoWindow 样式、图标与层级全部留在 map.html 内部，C# 侧不感知地图 SDK。
     /// </summary>
     /// <returns>可直接交给 PostWebMessageAsJson 的 JSON 字符串。</returns>
     public string BuildMapPayload()
@@ -146,6 +148,7 @@ public sealed class SiteProgressService
                 DaysSinceActivity = daysSince,
                 TodayPhotoCount = todaySiteRows.Sum(row => row.PhotoCount),
                 LastShotAt = latest.LastShotAt,
+                ActivitySummary = BuildActivitySummary(daysSince, latest.Category),
                 IsCompleted = isCompleted,
                 IsRevived = isRevived,
                 LifecycleStatus = lifecycleStatus
@@ -247,6 +250,19 @@ public sealed class SiteProgressService
 
         var days = (today.Date - date.Date).Days;
         return Math.Max(0, days);
+    }
+
+    /// <summary>拼装气泡一句话摘要：最近一次作业的时间描述 + 类别（类别未知时只写时间）。</summary>
+    private static string BuildActivitySummary(int daysSince, SiteProgressCategory category)
+    {
+        var timeText = daysSince <= 0 ? "今日有作业" : $"{daysSince}天前";
+
+        return category switch
+        {
+            SiteProgressCategory.EarthMaterialInbound => $"{timeText} · 地材进场",
+            SiteProgressCategory.SpoilTransfer => $"{timeText} · 渣土转运",
+            _ => timeText
+        };
     }
 
     /// <summary>拼装当日进度语义：按类别列出张数，没有记录时明确写「今日无作业记录」。</summary>

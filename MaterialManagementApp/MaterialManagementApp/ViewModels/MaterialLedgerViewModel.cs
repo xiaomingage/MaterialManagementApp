@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MaterialManagementApp.Common;
 using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
@@ -242,7 +243,7 @@ public partial class MaterialLedgerViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "加载物料台账数据失败。");
-            StatusMessage = $"加载失败：{ex.Message}";
+            StatusMessage = $"加载失败：{UserErrorText.Describe(ex)}";
         }
     }
 
@@ -458,7 +459,7 @@ public partial class MaterialLedgerViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "批量保存台账草稿失败。");
-            StatusMessage = $"保存失败：{ex.Message}";
+            StatusMessage = $"保存失败：{UserErrorText.Describe(ex)}";
             SaveFailed?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -585,7 +586,7 @@ public partial class MaterialLedgerViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "保存台账失败，Id={Id}。", row.Id);
-            StatusMessage = $"保存失败：{ex.Message}";
+            StatusMessage = $"保存失败：{UserErrorText.Describe(ex)}";
             SaveFailed?.Invoke(this, EventArgs.Empty);
         }
     }

@@ -283,6 +283,12 @@ namespace MaterialManagementApp
                 _logger.LogError(ex, "文件归档目录初始化失败。");
             }
 
+            // 每日首次启动自动备份（当天已备份则跳过）。失败只写 Warning，不阻断启动
+            DatabaseBackupService.CreateDailyBackupIfNeeded(DatabaseService.Instance.DatabasePath);
+
+            // 启动自检：数据库 / 归档根 / OCR 引擎，结果供首页提示条展示，任何一项失败都不影响继续使用
+            StartupSelfCheckService.Run();
+
             _window = new MainWindow();
             MainWindow = _window;
 

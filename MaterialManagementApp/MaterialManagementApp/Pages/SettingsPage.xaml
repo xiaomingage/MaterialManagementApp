@@ -687,7 +687,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="数据库备份" Style="{ThemeResource SubtitleTextBlockStyle}" />
                     <TextBlock
-                        Text="数据库位置由安装时的数据目录决定，本页只读展示、不提供修改入口。每次数据库版本升级前会自动备份到本机应用数据目录（%LOCALAPPDATA%\MaterialSystem\Backup）——备份放在程序目录之外，程序目录被覆盖或误删时依然完好；超出保留份数的最旧备份自动清理。卸载软件时若程序目录中仍有 Data 文件夹，卸载程序会自动把它移至 %LOCALAPPDATA%\MaterialSystem 下保存。"
+                        Text="数据库位置由安装时的数据目录决定，本页只读展示、不提供修改入口。每次数据库版本升级前会自动备份到本机应用数据目录（%LOCALAPPDATA%\MaterialSystem\Backup）——备份放在程序目录之外，程序目录被覆盖或误删时依然完好；超出保留份数的最旧备份自动清理。应用每天首次启动时还会自动备份一份到 Backup\daily，保留最近 30 天。卸载软件时若程序目录中仍有 Data 文件夹，卸载程序会自动把它移至 %LOCALAPPDATA%\MaterialSystem 下保存。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
@@ -696,6 +696,7 @@
                         <Button
                             Content="从备份恢复"
                             Click="OnRestoreBackupClick" />
+                        <Button Content="打开备份目录" Click="OnOpenBackupFolderClick" />
                         <!-- NumberBox.Value 为 double、配置字段为 int，沿用页面底部的经典 Binding 约定 -->
                         <NumberBox
                             Header="备份保留份数"
@@ -710,6 +711,11 @@
                         Text="备份保留份数修改后需点击「AI 大模型接入」卡片中的「保存配置」或页面底部「保存」按钮才会生效。"
                         Style="{ThemeResource CaptionTextBlockStyle}"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.LastBackupTimeText, Mode=OneWay}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
                     <TextBlock
                         Text="{x:Bind ViewModel.BackupStatus, Mode=OneWay}"

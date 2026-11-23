@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MaterialManagementApp.Common;
 using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,9 @@ public partial class DashboardViewModel : ObservableObject
 {
     /// <summary>分类日志实例，输出到 IDE 输出窗口（Debug Provider）。</summary>
     private readonly ILogger _logger = AppLog.CreateLogger<DashboardViewModel>();
+
+    /// <summary>启动自检提示是否已在本次运行中读取过（避免切换页面时再次弹出）。</summary>
+    private bool _startupWarningLoaded;
 
     /// <summary>
     /// 构造函数。partial property 不允许字段初始化器，
@@ -70,11 +74,44 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     private string _todayRecordsHint = string.Empty;
 
+    /// <summary>启动自检失败提示（多条换行合并）；全部通过时为空串。</summary>
+    [ObservableProperty]
+    private string _startupWarning = string.Empty;
+
+    /// <summary>启动自检提示条是否可见，用户点击「知道了」后隐藏。</summary>
+    [ObservableProperty]
+    private bool _isStartupWarningVisible;
+
+    /// <summary>关闭启动自检提示条（本次运行内不再显示）。</summary>
+    [RelayCommand]
+    public void DismissStartupWarning() => IsStartupWarningVisible = false;
+
+    /// <summary>扫描进度文本，如「正在扫描 128/500」或「扫描完成（今日新增 12 条）」。</summary>
+    [ObservableProperty]
+    private string _scanProgressText = string.Empty;
+
+    /// <summary>扫描进度文本是否可见。</summary>
+    [ObservableProperty]
+    private bool _isScanProgressVisible;
+
     /// <summary>加载台账概况统计。查询失败时记录提示而不抛出，保证首页始终可打开。</summary>
     [RelayCommand]
     public void Load()
     {
         _logger.LogInformation("正在加载仪表盘统计数据...");
+
+        // 启动自检提示只在本次运行首次加载时读取一次，用户关闭后切换页面不再重复弹出
+        if (!_startupWarningLoaded)
+        {
+            _startupWarningLoaded = true;
+            var warnings = StartupSelfCheckService.Messages;
+            if (warnings.Count > 0)
+            {
+                StartupWarning = string.Join(Environment.NewLine, warnings);
+                IsStartupWarningVisible = true;
+            }
+        }
+
         try
         {
             EarthMaterialCount = (int)DatabaseService.Instance.ExecuteScalarCount(
@@ -101,7 +138,7 @@ public partial class DashboardViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "加载仪表盘统计数据失败。");
-            StatusMessage = $"统计加载失败：{ex.Message}";
+            StatusMessage = $"统计加载失败：{UserErrorText.Describe(ex)}";
         }
     }
 
@@ -111,10 +148,19 @@ public partial class DashboardViewModel : ObservableObject
     /// </summary>
     public void RefreshConstructionData()
     {
+        // 地图聚合与今日记录分开容错：任一失败只清空自己，不连累另一块
         try
         {
             MapPayload = SiteProgressService.Instance.BuildMapPayload();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "生成地图数据失败，本次推送空地图。");
+            MapPayload = "{}";
+        }
 
+        try
+        {
             var today = DateTime.Today.ToString("yyyy-MM-dd");
             var rows = DatabaseService.Instance.GetSiteProgressForDate(today)
                 .OrderBy(row => row.IsLocated ? 0 : 1)
@@ -150,7 +196,7 @@ public partial class DashboardViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "加载施工进度数据失败。");
-            ConstructionSummary = $"施工进度加载失败：{ex.Message}";
+            ConstructionSummary = $"施工进度加载失败：{UserErrorText.Describe(ex)}";
         }
     }
 

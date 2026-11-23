@@ -300,7 +300,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"状态读取失败：{ex.Message}";
+            StatusText.Text = $"状态读取失败：{Common.UserErrorText.Describe(ex)}";
         }
     }
 

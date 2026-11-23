@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using MaterialManagementApp.Common;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
@@ -100,7 +101,7 @@ public sealed partial class OcrImportWindow : Window
         catch (Exception ex)
         {
             _logger.LogError(ex, "拖拽导入单据图片失败。");
-            SetStatus($"导入失败：{ex.Message}");
+            SetStatus($"导入失败：{UserErrorText.Describe(ex)}");
         }
     }
 
@@ -400,7 +401,7 @@ public sealed partial class OcrImportWindow : Window
             // 模型缺失、图片损坏、内存不足等都会走到这里，窗口必须给出可见提示而不能崩溃
             OcrProgress.IsIndeterminate = false;
             OcrProgress.Value = 0;
-            SetStatus($"识别失败：{ex.Message}");
+            SetStatus($"识别失败：{UserErrorText.Describe(ex)}");
             _logger.LogError(ex, "单据识别失败。");
         }
         finally

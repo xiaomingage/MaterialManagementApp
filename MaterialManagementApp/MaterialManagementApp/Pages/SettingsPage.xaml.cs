@@ -72,6 +72,23 @@ public sealed partial class SettingsPage : Page
         ViewModel.BackupStatus = backup is null
             ? "备份失败，请查看日志（Logs\\system-*.log）。"
             : $"备份完成：{backup}";
+        ViewModel.RefreshLastBackupTime();
+    }
+
+    /// <summary>打开备份目录（手动备份与每日自动备份都在其下）。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnOpenBackupFolderClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(AppPaths.BackupDir);
+            System.Diagnostics.Process.Start("explorer.exe", AppPaths.BackupDir);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.BackupStatus = $"无法打开备份目录：{ex.Message}";
+        }
     }
 
     /// <summary>从备份恢复：选择备份文件，确认后覆盖当前数据库并退出软件（重启后生效）。</summary>

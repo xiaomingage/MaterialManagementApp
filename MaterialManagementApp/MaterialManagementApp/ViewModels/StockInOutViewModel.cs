@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MaterialManagementApp.Common;
 using MaterialManagementApp.Models;
 using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
@@ -143,7 +144,7 @@ public partial class StockInOutViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "加载库存流水数据失败。");
-            StatusMessage = $"加载失败：{ex.Message}";
+            StatusMessage = $"加载失败：{UserErrorText.Describe(ex)}";
         }
     }
 
@@ -293,7 +294,7 @@ public partial class StockInOutViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "保存库存流水失败，Id={Id}。", row.Id);
-            StatusMessage = $"保存失败：{ex.Message}";
+            StatusMessage = $"保存失败：{UserErrorText.Describe(ex)}";
         }
     }
 

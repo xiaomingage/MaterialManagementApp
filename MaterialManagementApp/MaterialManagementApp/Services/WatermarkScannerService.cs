@@ -22,6 +22,14 @@ namespace MaterialManagementApp.Services;
 /// 3. 全部解析在后台队列中串行执行，不阻塞 UI 线程；
 /// 4. 提取不到经纬度的照片进入「待定位池」（IsLocated=false），保留记录而不是丢弃。
 /// </summary>
+/// <summary>扫描批次进度快照，供界面展示。</summary>
+/// <param name="Processed">本批已处理文件数。</param>
+/// <param name="Total">本批已入队文件总数。</param>
+/// <param name="NewRecords">本批成功入库（新增或合并）的文件数。</param>
+/// <param name="IsCompleted">本批是否已处理完。</param>
+public sealed record ScanProgress(int Processed, int Total, int NewRecords, bool IsCompleted);
+
+/// <summary>扫描服务的单例入口与生命周期管理（实现见类内注释）。</summary>
 public sealed class WatermarkScannerService : IDisposable
 {
     /// <summary>文件落地后的等待时间，避免相册同步过程中读到半张图。</summary>
@@ -82,6 +90,18 @@ public sealed class WatermarkScannerService : IDisposable
     /// <summary>已入队未处理的文件，避免全量扫描与监听事件重复入队。</summary>
     private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>当前批次入队总数（全量扫描 + 监听新增）。</summary>
+    private int _batchTotal;
+
+    /// <summary>当前批次已处理数。</summary>
+    private int _batchProcessed;
+
+    /// <summary>当前批次成功入库（新增/合并）的文件数。</summary>
+    private int _batchNewRecords;
+
+    /// <summary>当前批次是否已发出完成通知，避免重复提示。</summary>
+    private bool _batchCompletionNotified = true;
+
     private Channel<string> _queue = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
     private CancellationTokenSource? _cts;
@@ -96,6 +116,9 @@ public sealed class WatermarkScannerService : IDisposable
 
     /// <summary>一条水印图片处理完成（成功入库）后触发，供首页刷新地图；事件在后台线程触发。</summary>
     public event EventHandler? ScanCompleted;
+
+    /// <summary>扫描批次进度变化（后台线程触发）：已处理数、总数、本批入库数、是否完成。</summary>
+    public event EventHandler<ScanProgress>? ScanProgressChanged;
 
     /// <summary>当前是否已启动监听。</summary>
     public bool IsRunning
@@ -138,6 +161,12 @@ public sealed class WatermarkScannerService : IDisposable
             var cts = new CancellationTokenSource();
             _cts = cts;
             _queue = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+
+            // 新批次从零开始计数，完成通知等待本批处理完再发
+            Interlocked.Exchange(ref _batchTotal, 0);
+            Interlocked.Exchange(ref _batchProcessed, 0);
+            Interlocked.Exchange(ref _batchNewRecords, 0);
+            _batchCompletionNotified = true;
 
             _worker = Task.Run(() => WorkerLoopAsync(cts.Token));
 
@@ -335,7 +364,13 @@ public sealed class WatermarkScannerService : IDisposable
             {
                 _pending.Remove(path);
             }
+
+            return;
         }
+
+        // 入队成功才计入本批总数，避免重复入队把分母冲大
+        Interlocked.Increment(ref _batchTotal);
+        _batchCompletionNotified = false;
     }
 
     /// <summary>后台串行消费队列：逐张识别、入库，异常不中断后续文件。</summary>
@@ -347,7 +382,10 @@ public sealed class WatermarkScannerService : IDisposable
             {
                 try
                 {
-                    await ProcessFileAsync(path, token).ConfigureAwait(false);
+                    if (await ProcessFileAsync(path, token).ConfigureAwait(false))
+                    {
+                        Interlocked.Increment(ref _batchNewRecords);
+                    }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
@@ -364,6 +402,9 @@ public sealed class WatermarkScannerService : IDisposable
                     {
                         _pending.Remove(path);
                     }
+
+                    Interlocked.Increment(ref _batchProcessed);
+                    ReportProgress();
                 }
             }
         }
@@ -376,12 +417,12 @@ public sealed class WatermarkScannerService : IDisposable
     /// <summary>
     /// 处理单张图片：OCR → 解析坐标/时间/类别/工点 → 坐标转 GCJ-02 → 幂等入库。
     /// </summary>
-    private async Task ProcessFileAsync(string path, CancellationToken token)
+    private async Task<bool> ProcessFileAsync(string path, CancellationToken token)
     {
         var info = new FileInfo(path);
         if (!info.Exists)
         {
-            return;
+            return false;
         }
 
         var size = info.Length;
@@ -390,7 +431,7 @@ public sealed class WatermarkScannerService : IDisposable
         // 全量扫描与监听事件可能同时命中同一文件，真正识别前再判一次
         if (DatabaseService.Instance.IsWatermarkFileProcessed(path, size, ticks))
         {
-            return;
+            return false;
         }
 
         var text = await RecognizeWithRetryAsync(path, token).ConfigureAwait(false);
@@ -417,6 +458,9 @@ public sealed class WatermarkScannerService : IDisposable
             (gcjLng, gcjLat) = CoordConverter.Wgs84ToGcj02(wgsLng, wgsLat);
         }
 
+        // 解析结果唯一组装点（数据来源契约）：文件名/目录命中类别、OCR 文本解析出的坐标与工点名、
+        // 坐标兜底工点，全部在这里汇成 SiteProgressDaily 再写库。
+        // 下游（聚合、地图、列表）只依赖该结构，不再各自重新解析原图或文件名；新增来源时也只改这一处。
         var siteName = ResolveSiteName(TryParseSiteName(text), path, isLocated, gcjLng, gcjLat);
         var db = DatabaseService.Instance;
 
@@ -496,6 +540,48 @@ public sealed class WatermarkScannerService : IDisposable
             Path.GetFileName(path), siteName, dateText, category, isLocated);
 
         ScanCompleted?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>
+    /// 上报本批进度：已处理数增加后调用；处理完且队列为空时只发一次完成通知。
+    /// 仅在队列消费者线程调用，无并发写。
+    /// </summary>
+    private void ReportProgress()
+    {
+        var total = Volatile.Read(ref _batchTotal);
+        if (total <= 0)
+        {
+            return;
+        }
+
+        var processed = Volatile.Read(ref _batchProcessed);
+        var newRecords = Volatile.Read(ref _batchNewRecords);
+
+        bool queueEmpty;
+        try
+        {
+            queueEmpty = _queue.Reader.Count == 0;
+        }
+        catch (NotSupportedException)
+        {
+            // 不支持计数的通道按「未处理完」处理，避免误报完成
+            queueEmpty = false;
+        }
+
+        var completed = processed >= total && queueEmpty;
+
+        if (completed)
+        {
+            if (_batchCompletionNotified)
+            {
+                return;
+            }
+
+            _batchCompletionNotified = true;
+        }
+
+        ScanProgressChanged?.Invoke(this, new ScanProgress(processed, total, newRecords, completed));
     }
 
     /// <summary>识别失败时尽力写入失败状态（下次启动会重试该文件）。</summary>

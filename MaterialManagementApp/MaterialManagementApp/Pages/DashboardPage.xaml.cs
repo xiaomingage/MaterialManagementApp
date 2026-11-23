@@ -51,13 +51,19 @@ public sealed partial class DashboardPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        ViewModel.Load();
+
+        // 首屏分级加载：今日记录与地图数据先出，统计卡查询放后面，避免首屏等待计数
         ViewModel.RefreshConstructionData();
         PushMapData();
+        ViewModel.Load();
 
         // 后台扫描入库完成后刷新地图；先退订再订阅，避免页面反复导航导致重复触发
         WatermarkScannerService.Instance.ScanCompleted -= OnScanCompleted;
         WatermarkScannerService.Instance.ScanCompleted += OnScanCompleted;
+
+        // 扫描进度：处理一张更新一次，完成后短暂展示再淡出
+        WatermarkScannerService.Instance.ScanProgressChanged -= OnScanProgressChanged;
+        WatermarkScannerService.Instance.ScanProgressChanged += OnScanProgressChanged;
 
         // 设置页保存高德 Key / 安全密钥后，无需重启即可重新加载地图
         SettingsService.Instance.SettingsChanged -= OnSettingsChanged;
@@ -70,7 +76,48 @@ public sealed partial class DashboardPage : Page
     private void OnPageUnloaded(object sender, RoutedEventArgs e)
     {
         WatermarkScannerService.Instance.ScanCompleted -= OnScanCompleted;
+        WatermarkScannerService.Instance.ScanProgressChanged -= OnScanProgressChanged;
         SettingsService.Instance.SettingsChanged -= OnSettingsChanged;
+        _scanProgressTimer?.Stop();
+    }
+
+    /// <summary>扫描进度计时器：完成后展示几秒再隐藏。</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _scanProgressTimer;
+
+    /// <summary>扫描进度变化（后台线程）：回投 UI 线程更新一行文本，不阻塞识别。</summary>
+    private void OnScanProgressChanged(object? sender, ScanProgress e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // 新进度到来时取消上一次的自动隐藏
+            _scanProgressTimer?.Stop();
+
+            if (e.IsCompleted)
+            {
+                ViewModel.ScanProgressText = $"扫描完成（今日新增 {e.NewRecords} 条）";
+                ViewModel.IsScanProgressVisible = true;
+                HideScanProgressLater(TimeSpan.FromSeconds(5));
+                return;
+            }
+
+            ViewModel.ScanProgressText = $"正在扫描 {e.Processed}/{e.Total}";
+            ViewModel.IsScanProgressVisible = true;
+        });
+    }
+
+    /// <summary>延时隐藏扫描进度文本（完成后短暂展示，不做动画）。</summary>
+    private void HideScanProgressLater(TimeSpan delay)
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = delay;
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            ViewModel.IsScanProgressVisible = false;
+        };
+        _scanProgressTimer = timer;
+        timer.Start();
     }
 
     /// <summary>后台扫描完成：回投 UI 线程刷新列表与地图气泡。</summary>
@@ -122,6 +169,7 @@ public sealed partial class DashboardPage : Page
             }
             else
             {
+                MapLoadingText.Visibility = Visibility.Collapsed;
                 ProgressMap.NavigateToString(
                     "<html><body style=\"font-family:'Microsoft YaHei UI',sans-serif;padding:24px;color:#334155;\">"
                     + "地图模板缺失：未找到 Assets\\map.html，请重新安装软件。</body></html>");
@@ -130,6 +178,7 @@ public sealed partial class DashboardPage : Page
         catch (Exception ex)
         {
             // WebView2 运行时缺失（旧系统未安装）或内核初始化失败时给出可读提示，不影响页面其他功能
+            MapLoadingText.Visibility = Visibility.Collapsed;
             MapErrorText.Text = $"地图组件初始化失败（可能未安装 WebView2 运行时）：{ex.Message}";
             MapErrorText.Visibility = Visibility.Visible;
             ViewModel.StatusMessage = "地图组件初始化失败，施工记录与统计功能不受影响。";
@@ -190,9 +239,17 @@ public sealed partial class DashboardPage : Page
     /// <summary>页面导航完成：若前端已就绪则补推送一次工点数据（覆盖先就绪后导航完成的时序）。</summary>
     private void OnMapNavigationCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
     {
+        // 导航结束即撤掉占位文案，成功由 map-ready 继续推送数据，失败则展示可读提示
+        MapLoadingText.Visibility = Visibility.Collapsed;
+
         if (args.IsSuccess && _mapPageReady)
         {
             PushMapData();
+        }
+        else if (!args.IsSuccess)
+        {
+            MapErrorText.Text = "地图加载失败：请检查网络与高德 Key 配置，或稍后重新进入本页。";
+            MapErrorText.Visibility = Visibility.Visible;
         }
     }
 
@@ -208,6 +265,7 @@ public sealed partial class DashboardPage : Page
             if (string.Equals(message, "map-ready", StringComparison.OrdinalIgnoreCase))
             {
                 _mapPageReady = true;
+                MapLoadingText.Visibility = Visibility.Collapsed;
                 PushMapData();
                 return;
             }
@@ -545,6 +603,14 @@ public sealed partial class DashboardPage : Page
         {
             ViewModel.ShowNotImplemented("备份数据");
         }
+    }
+
+    /// <summary>关闭启动自检提示条。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnDismissStartupWarningClick(object sender, RoutedEventArgs e)
+    {
+        ViewModel.DismissStartupWarning();
     }
 
     /// <summary>

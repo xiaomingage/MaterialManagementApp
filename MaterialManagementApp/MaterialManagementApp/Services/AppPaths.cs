@@ -43,6 +43,9 @@ public static class AppPaths
     /// <summary>数据库备份目录：%LOCALAPPDATA%\MaterialSystem\Backup。</summary>
     public static string BackupDir => Path.Combine(LocalAppDataRoot, "Backup");
 
+    /// <summary>每日自动备份目录：Backup\daily，按 yyyyMMdd.db 每天一份，保留最近 30 天。</summary>
+    public static string BackupDailyDir => Path.Combine(BackupDir, "daily");
+
     /// <summary>
     /// 默认归档根目录：安装版取安装向导选择的 <see cref="DataRoot"/>，
     /// 便携版取程序目录下的 <see cref="ProgramDataDir"/>，与数据库现有解析顺序一致。

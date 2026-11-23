@@ -86,6 +86,12 @@
             color: #334155;
         }
 
+        /* 一句话摘要：最近一次作业时间 + 类别，作为状态色之外的补充信息 */
+        .bubble-summary {
+            color: #64748B;
+            font-size: 11px;
+        }
+
         .bubble-status {
             margin-top: 4px;
             font-weight: 600;
@@ -472,6 +478,11 @@
                 progress.className = 'bubble-progress';
                 progress.textContent = site.progressText || '今日无作业记录';
 
+                // 一句话摘要：最近一次作业的时间与类别（补充信息，不影响状态色逻辑）
+                const summary = document.createElement('div');
+                summary.className = 'bubble-summary';
+                summary.textContent = site.activitySummary || '';
+
                 const status = document.createElement('div');
                 status.className = 'bubble-status';
                 status.textContent = site.statusText || '作业中';
@@ -489,6 +500,9 @@
 
                 wrapper.appendChild(name);
                 wrapper.appendChild(progress);
+                if (summary.textContent) {
+                    wrapper.appendChild(summary);
+                }
                 wrapper.appendChild(status);
                 wrapper.appendChild(tail);
                 return wrapper;

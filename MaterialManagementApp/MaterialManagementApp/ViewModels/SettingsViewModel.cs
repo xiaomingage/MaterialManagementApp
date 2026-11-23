@@ -398,6 +398,19 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _backupStatus = string.Empty;
 
+    /// <summary>最近一次备份时间展示文本（含手动备份与每日自动备份）。</summary>
+    [ObservableProperty]
+    private string _lastBackupTimeText = "尚无备份记录";
+
+    /// <summary>重新读取最近一次备份时间，供页面加载与手动备份后刷新。</summary>
+    public void RefreshLastBackupTime()
+    {
+        var time = DatabaseBackupService.GetLastBackupTime();
+        LastBackupTimeText = time is null
+            ? "尚无备份记录"
+            : $"最近一次备份：{time:yyyy-MM-dd HH:mm:ss}";
+    }
+
     /// <summary>操作结果提示文本。</summary>
     [ObservableProperty]
     private string _statusMessage;
@@ -438,6 +451,7 @@ public partial class SettingsViewModel : ObservableObject
             AiStatus = BuildAiStatusText(settings);
 
             BackupRetentionCount = settings.BackupRetentionCount;
+            RefreshLastBackupTime();
             WatermarkRootPath = settings.WatermarkRootPath ?? string.Empty;
             AmapJsApiKey = settings.AmapJsApiKey ?? string.Empty;
             AmapSecurityCode = settings.AmapSecurityCode ?? string.Empty;
@@ -465,7 +479,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "加载应用设置数据失败。");
-            StatusMessage = $"读取设置失败：{ex.Message}";
+            StatusMessage = $"读取设置失败：{UserErrorText.Describe(ex)}";
         }
         finally
         {
@@ -641,7 +655,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "保存应用设置失败。");
-            StatusMessage = $"保存失败：{ex.Message}";
+            StatusMessage = $"保存失败：{UserErrorText.Describe(ex)}";
         }
     }
 
@@ -1186,7 +1200,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusMessage = $"备份失败：{ex.Message}";
+            StatusMessage = $"备份失败：{UserErrorText.Describe(ex)}";
         }
     }
 

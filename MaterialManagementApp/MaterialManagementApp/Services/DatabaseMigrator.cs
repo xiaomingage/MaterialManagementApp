@@ -25,6 +25,8 @@ public sealed record DatabaseMigrationResult(
 /// 再按顺序执行增量迁移脚本（整个迁移包在一个事务里，任何一条失败整体回滚）。
 /// 迁移硬性规则：只允许新增表、新增字段、新增索引；禁止 DROP / DELETE / TRUNCATE /
 /// 修改已有字段数据；脚本必须幂等，重复执行不报错。
+/// 回滚策略：不实现代码级回滚；每个迁移项必须在注释中写清回滚 SQL、数据影响，
+/// 需要完整还原时使用迁移前自动备份（Backup 目录）覆盖数据库。
 /// </summary>
 public sealed class DatabaseMigrator
 {
@@ -40,6 +42,9 @@ public sealed class DatabaseMigrator
     private static readonly Dictionary<int, string[]> Migrations = new()
     {
         // 1 → 2：施工进度（水印相机照片扫描）相关表；只新增表与索引，幂等
+        // 回滚方式：删除本次新增的两张表（DROP TABLE SiteProgressDaily; DROP TABLE WatermarkScannedFile;），
+        // 再把 DbVersion.VersionNo 改回 1；若需保留照片解析结果，先从迁移前自动备份恢复整个库。
+        // 说明：施工进度数据均由扫描服务重建，删表不影响台账、出入库等业务数据。
         [1] = new[]
         {
             """
@@ -75,6 +80,8 @@ public sealed class DatabaseMigrator
 
         // 2 → 3：工点人工状态覆盖（已完工 / 复工）。工点无独立主数据表，
         // SiteKey 与 SiteProgressDaily.SiteName 完全一致；只新增表，幂等
+        // 回滚方式：DROP TABLE SiteStatusOverride; 并把 DbVersion.VersionNo 改回 2；
+        // 仅丢失人工「已完工」标记与备注，照片与施工记录不受影响，必要时从迁移前备份恢复。
         [2] = new[]
         {
             """
