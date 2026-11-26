@@ -22,7 +22,7 @@
     <!-- .NET 运行时自包含：目标机器无需预装 .NET 8 Desktop Runtime -->
     <SelfContained>true</SelfContained>
     <!-- 应用版本号，与安装脚本保持一致 -->
-    <Version>1.11.0</Version>
+    <Version>1.11.1</Version>
     <AssemblyTitle>物资管理系统</AssemblyTitle>
     <Product>物资管理系统</Product>
     <Description>工程项目物资管理系统</Description>
