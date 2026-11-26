@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -18,7 +19,9 @@ using MaterialManagementApp.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Pickers;
+using Windows.UI;
 
 namespace MaterialManagementApp.ViewModels;
 
@@ -332,12 +335,6 @@ public partial class SettingsViewModel : ObservableObject
             ? Visibility.Collapsed
             : Visibility.Visible;
 
-    /// <summary>「恢复默认位置」按钮显隐：重定向了配置文件（存在 settings.path 引导）时才显示。</summary>
-    public Visibility RestoreDefaultSettingsVisibility =>
-        SettingsService.GetCustomSettingsFile() is null
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-
     /// <summary>数据库备份保留份数；保存设置时写回配置文件。</summary>
     [ObservableProperty]
     private int _backupRetentionCount;
@@ -364,25 +361,56 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _projectDeptAddress = string.Empty;
 
-    /// <summary>项目部经度文本（空表示未配置）。</summary>
+    /// <summary>项目部单输入框经纬度文本（空表示未配置）。</summary>
     [ObservableProperty]
-    private string _projectDeptLng = string.Empty;
-
-    /// <summary>项目部纬度文本（空表示未配置）。</summary>
-    [ObservableProperty]
-    private string _projectDeptLat = string.Empty;
+    private string _projectDeptCoordinates = string.Empty;
 
     /// <summary>仓库名称（地图常显标签）。</summary>
     [ObservableProperty]
     private string _warehouseName = string.Empty;
 
-    /// <summary>仓库经度文本（空表示未配置）。</summary>
+    /// <summary>仓库单输入框经纬度文本（空表示未配置）。</summary>
     [ObservableProperty]
-    private string _warehouseLng = string.Empty;
+    private string _warehouseCoordinates = string.Empty;
 
-    /// <summary>仓库纬度文本（空表示未配置）。</summary>
+    private static readonly Brush _coordinateSuccessBrush =
+        new SolidColorBrush(Color.FromArgb(255, 21, 128, 61));
+
+    private static readonly Brush _coordinateErrorBrush =
+        new SolidColorBrush(Color.FromArgb(255, 220, 38, 38));
+
     [ObservableProperty]
-    private string _warehouseLat = string.Empty;
+    private string _projectDeptCoordinateFeedback = string.Empty;
+
+    [ObservableProperty]
+    private Brush _projectDeptCoordinateFeedbackBrush = _coordinateSuccessBrush;
+
+    [ObservableProperty]
+    private string _warehouseCoordinateFeedback = string.Empty;
+
+    [ObservableProperty]
+    private Brush _warehouseCoordinateFeedbackBrush = _coordinateSuccessBrush;
+
+    /// <summary>失焦时解析坐标并显示“已识别”或具体错误，不修改输入内容。</summary>
+    public void UpdateCoordinateFeedback(string? text, bool isProjectDept)
+    {
+        var configured = GeoCoordinate.TryParseCombined(text, out _, out _, out var error);
+        var feedback = string.IsNullOrWhiteSpace(text)
+            ? string.Empty
+            : configured ? "已识别" : error;
+        var brush = feedback.Length > 0 && !configured ? _coordinateErrorBrush : _coordinateSuccessBrush;
+
+        if (isProjectDept)
+        {
+            ProjectDeptCoordinateFeedback = feedback;
+            ProjectDeptCoordinateFeedbackBrush = brush;
+        }
+        else
+        {
+            WarehouseCoordinateFeedback = feedback;
+            WarehouseCoordinateFeedbackBrush = brush;
+        }
+    }
 
     // ==================== 统计与配额 ====================
 
@@ -439,7 +467,6 @@ public partial class SettingsViewModel : ObservableObject
             SettingsFilePath = SettingsService.Instance.SettingsFilePath;
             DefaultDatabaseFolder = SettingsService.DefaultDatabaseFolder;
             OnPropertyChanged(nameof(RestoreDefaultDatabaseVisibility));
-            OnPropertyChanged(nameof(RestoreDefaultSettingsVisibility));
 
             OllamaUrl = string.IsNullOrWhiteSpace(settings.OllamaUrl) ? "http://localhost:11434" : settings.OllamaUrl;
             OllamaModel = settings.OllamaModel ?? string.Empty;
@@ -457,11 +484,11 @@ public partial class SettingsViewModel : ObservableObject
             AmapSecurityCode = settings.AmapSecurityCode ?? string.Empty;
             ProjectDeptName = settings.ProjectDeptName ?? string.Empty;
             ProjectDeptAddress = settings.ProjectDeptAddress ?? string.Empty;
-            ProjectDeptLng = settings.ProjectDeptLng ?? string.Empty;
-            ProjectDeptLat = settings.ProjectDeptLat ?? string.Empty;
+            ProjectDeptCoordinates = GeoCoordinate.FormatPair(settings.ProjectDeptLng, settings.ProjectDeptLat);
+            ProjectDeptCoordinateFeedback = string.Empty;
             WarehouseName = settings.WarehouseName ?? string.Empty;
-            WarehouseLng = settings.WarehouseLng ?? string.Empty;
-            WarehouseLat = settings.WarehouseLat ?? string.Empty;
+            WarehouseCoordinates = GeoCoordinate.FormatPair(settings.WarehouseLng, settings.WarehouseLat);
+            WarehouseCoordinateFeedback = string.Empty;
             AiMonthlyCallLimitText = settings.AiMonthlyCallLimit is > 0
                 ? settings.AiMonthlyCallLimit.Value.ToString()
                 : string.Empty;
@@ -507,9 +534,9 @@ public partial class SettingsViewModel : ObservableObject
             return;
         }
 
-        // 固定位置坐标校验：经纬度必须成对、数值合法；名称已填但坐标为空也拒绝保存
-        var deptConfigured = GeoCoordinate.TryParsePair(
-            ProjectDeptLng, ProjectDeptLat, out _, out _, out var deptError);
+        // 两组坐标都在写入任何设置前完成解析，任一失败即拒绝保存整组设置。
+        var deptConfigured = GeoCoordinate.TryParseCombined(
+            ProjectDeptCoordinates, out var deptLng, out var deptLat, out var deptError);
         if (deptError.Length > 0)
         {
             StatusMessage = $"项目部坐标无效，已取消保存：{deptError}";
@@ -522,8 +549,8 @@ public partial class SettingsViewModel : ObservableObject
             return;
         }
 
-        var warehouseConfigured = GeoCoordinate.TryParsePair(
-            WarehouseLng, WarehouseLat, out _, out _, out var warehouseError);
+        var warehouseConfigured = GeoCoordinate.TryParseCombined(
+            WarehouseCoordinates, out var warehouseLng, out var warehouseLat, out var warehouseError);
         if (warehouseError.Length > 0)
         {
             StatusMessage = $"仓库坐标无效，已取消保存：{warehouseError}";
@@ -587,14 +614,14 @@ public partial class SettingsViewModel : ObservableObject
             settings.AmapSecurityCode = (AmapSecurityCode ?? string.Empty).Trim();
             settings.ArchiveRootPath = archiveRoot;
 
-            // 固定位置：字符串保存时统一 trim（坐标保留用户输入原文，解析交给地图侧）
+            // 固定位置：单输入框仅改变 UI 形态，仍拆回原有四个字符串字段存储。
             settings.ProjectDeptName = (ProjectDeptName ?? string.Empty).Trim();
             settings.ProjectDeptAddress = (ProjectDeptAddress ?? string.Empty).Trim();
-            settings.ProjectDeptLng = (ProjectDeptLng ?? string.Empty).Trim();
-            settings.ProjectDeptLat = (ProjectDeptLat ?? string.Empty).Trim();
+            settings.ProjectDeptLng = deptConfigured ? deptLng.ToString(CultureInfo.InvariantCulture) : string.Empty;
+            settings.ProjectDeptLat = deptConfigured ? deptLat.ToString(CultureInfo.InvariantCulture) : string.Empty;
             settings.WarehouseName = (WarehouseName ?? string.Empty).Trim();
-            settings.WarehouseLng = (WarehouseLng ?? string.Empty).Trim();
-            settings.WarehouseLat = (WarehouseLat ?? string.Empty).Trim();
+            settings.WarehouseLng = warehouseConfigured ? warehouseLng.ToString(CultureInfo.InvariantCulture) : string.Empty;
+            settings.WarehouseLat = warehouseConfigured ? warehouseLat.ToString(CultureInfo.InvariantCulture) : string.Empty;
 
             // 额度上限：0 统一存为 null（隐藏额度条），避免 0 与「未配置」两种语义并存
             settings.AiMonthlyCallLimit = aiMonthlyLimit > 0 ? aiMonthlyLimit : null;
@@ -831,50 +858,6 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 弹出文件选择器选择要加载的配置文件（.json），选中后写入引导文件（settings.path），
-    /// 重启程序后按该文件加载配置；取消选择则维持现状。
-    /// </summary>
-    [RelayCommand]
-    private async Task BrowseSettingsFileAsync()
-    {
-        var file = await PickFileAsync(".json");
-        if (file is null)
-        {
-            return;
-        }
-
-        try
-        {
-            SettingsService.SetCustomSettingsFile(file.Path);
-            RefreshPathDisplays();
-            StatusMessage = "已选择配置文件，重启程序后生效。";
-            _logger.LogInformation("已选择配置文件：{Path}", file.Path);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "保存配置文件选择失败。");
-            StatusMessage = $"保存失败：{ex.Message}";
-        }
-    }
-
-    /// <summary>清除配置文件重定向（删除 settings.path 引导文件），恢复使用程序目录\Data\settings.json，重启后生效。</summary>
-    [RelayCommand]
-    private void RestoreDefaultSettingsFile()
-    {
-        try
-        {
-            SettingsService.SetCustomSettingsFile(null);
-            RefreshPathDisplays();
-            StatusMessage = "已恢复默认配置文件位置，重启程序后生效。";
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "恢复默认配置文件位置失败。");
-            StatusMessage = $"恢复默认失败：{ex.Message}";
-        }
-    }
-
-    /// <summary>
     /// 选择水印图片根目录：「今日水印相机」照片的固定存放文件夹（可含日期子文件夹）。
     /// 选中后仅更新表单，点击「保存」才落盘并重启扫描。
     /// </summary>
@@ -1025,7 +1008,6 @@ public partial class SettingsViewModel : ObservableObject
     {
         DatabasePath = DatabaseService.Instance.DatabasePath;
         OnPropertyChanged(nameof(RestoreDefaultDatabaseVisibility));
-        OnPropertyChanged(nameof(RestoreDefaultSettingsVisibility));
     }
 
     /// <summary>

@@ -4,43 +4,9 @@ using Xunit;
 
 namespace MaterialManagementApp.Tests;
 
-/// <summary>
-/// SettingsService 配置文件选择（settings.path 引导重定向）与读写校正逻辑的单元测试。
-/// 测试进程的默认配置目录 = 测试输出目录\Data（测试环境无 install-config.json，AppPaths.DataRoot 为 null），
-/// 所有文件 IO 均落在测试输出目录内，不触碰真实用户配置。
-/// xunit 同一测试类内用例顺序执行，且每个用例的构造函数都会重置引导文件，用例之间互不依赖。
-/// </summary>
+/// <summary>SettingsService 用户配置路径、一次性迁移与读写校正逻辑的单元测试。</summary>
 public sealed class SettingsServiceTests
 {
-    private static string DataDir => SettingsService.DefaultSettingsDirectory;
-
-    private static string BootPath => SettingsService.SettingsRedirectFilePath;
-
-    private static string DefaultSettingsJson => Path.Combine(DataDir, "settings.json");
-
-    public SettingsServiceTests()
-    {
-        Directory.CreateDirectory(DataDir);
-        ResetBootFile();
-    }
-
-    private static void ResetBootFile()
-    {
-        if (File.Exists(BootPath))
-        {
-            File.Delete(BootPath);
-        }
-    }
-
-    /// <summary>创建一个内容为 "{}" 的临时 json 文件，返回完整路径。</summary>
-    private static string NewTempJson()
-    {
-        var dir = TempDir();
-        var path = Path.Combine(dir, "settings.json");
-        File.WriteAllText(path, "{}");
-        return path;
-    }
-
     private static string TempDir()
     {
         var dir = Path.Combine(Path.GetTempPath(), "mma-tests", Guid.NewGuid().ToString("N"));
@@ -48,129 +14,136 @@ public sealed class SettingsServiceTests
         return dir;
     }
 
-    // ==================== 引导文件：选择 / 恢复默认 ====================
+    // ==================== 用户配置路径与迁移 ====================
 
     [Fact]
-    public void SetCustomSettingsFile_写入后引导文件存在且Get返回完整路径()
+    public void UserSettingsFilePath_固定在当前用户MaterialManagementApp目录()
     {
-        var target = NewTempJson();
+        var expected = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MaterialManagementApp",
+            "AppSettings.json");
 
-        SettingsService.SetCustomSettingsFile(target);
-
-        Assert.True(File.Exists(BootPath), "引导文件 settings.path 应已写入");
-        Assert.Equal(Path.GetFullPath(target), SettingsService.GetCustomSettingsFile());
+        Assert.Equal(expected, AppPaths.UserSettingsFilePath);
     }
 
     [Fact]
-    public void SetCustomSettingsFile_相对路径写入后归一化为绝对路径()
+    public void ResolveSettingsFilePath_无旧配置时创建默认配置()
     {
-        SettingsService.SetCustomSettingsFile("relative-settings.json");
+        var target = Path.Combine(TempDir(), "AppSettings.json");
 
-        var content = File.ReadAllText(BootPath).Trim();
-        Assert.Equal(Path.GetFullPath("relative-settings.json"), content);
+        var resolved = SettingsService.ResolveSettingsFilePath(target, Array.Empty<string?>());
+
+        Assert.Equal(target, resolved);
+        Assert.True(File.Exists(target));
+        Assert.Equal(10, SettingsService.LoadSettingsFrom(target).LowStockThreshold);
     }
 
     [Fact]
-    public void SetCustomSettingsFile_传null删除引导文件恢复默认()
+    public void ResolveSettingsFilePath_迁移旧配置并保留源文件()
     {
-        var target = NewTempJson();
-        SettingsService.SetCustomSettingsFile(target);
-        Assert.True(File.Exists(BootPath));
+        var legacy = Path.Combine(TempDir(), "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings { AmapJsApiKey = "legacy-key" });
+        var target = Path.Combine(TempDir(), "AppSettings.json");
 
-        SettingsService.SetCustomSettingsFile(null);
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
 
-        Assert.False(File.Exists(BootPath), "传 null 应删除引导文件");
-        Assert.Null(SettingsService.GetCustomSettingsFile());
+        Assert.True(File.Exists(legacy));
+        Assert.Equal("legacy-key", SettingsService.LoadSettingsFrom(target).AmapJsApiKey);
     }
 
     [Fact]
-    public void SetCustomSettingsFile_传空串删除引导文件恢复默认()
+    public void ResolveSettingsFilePath_新配置存在时不被旧配置覆盖()
     {
-        var target = NewTempJson();
-        SettingsService.SetCustomSettingsFile(target);
+        var target = Path.Combine(TempDir(), "AppSettings.json");
+        SettingsService.SaveSettingsTo(target, new AppSettings { AmapJsApiKey = "current-key" });
+        var legacy = Path.Combine(TempDir(), "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings { AmapJsApiKey = "legacy-key" });
 
-        SettingsService.SetCustomSettingsFile(string.Empty);
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
 
-        Assert.False(File.Exists(BootPath));
-        Assert.Null(SettingsService.GetCustomSettingsFile());
-    }
-
-    // ==================== 引导文件：读取容错 ====================
-
-    [Fact]
-    public void GetCustomSettingsFile_引导文件缺失返回null()
-    {
-        Assert.Null(SettingsService.GetCustomSettingsFile());
+        Assert.Equal("current-key", SettingsService.LoadSettingsFrom(target).AmapJsApiKey);
     }
 
     [Fact]
-    public void GetCustomSettingsFile_指向的文件不存在返回null()
+    public void ResolveSettingsFilePath_新配置Key为空时从旧配置补齐且不覆盖其他设置()
     {
-        SettingsService.SetCustomSettingsFile(Path.Combine(TempDir(), "ghost.json"));
+        var dir = TempDir();
+        var target = Path.Combine(dir, "AppSettings.json");
+        SettingsService.SaveSettingsTo(target, new AppSettings { ProjectName = "当前项目" });
+        var legacy = Path.Combine(dir, "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings
+        {
+            AmapJsApiKey = "legacy-key",
+            AmapSecurityCode = "legacy-secret",
+            ProjectName = "旧项目"
+        });
 
-        Assert.Null(SettingsService.GetCustomSettingsFile());
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
+
+        var loaded = SettingsService.LoadSettingsFrom(target);
+        Assert.Equal("legacy-key", loaded.AmapJsApiKey);
+        Assert.Equal("legacy-secret", loaded.AmapSecurityCode);
+        Assert.Equal("当前项目", loaded.ProjectName);
+        Assert.True(File.Exists(Path.Combine(dir, "settings.key-merged")));
     }
 
     [Fact]
-    public void GetCustomSettingsFile_引导文件为空内容返回null()
+    public void ResolveSettingsFilePath_新配置已有Key时不被旧配置覆盖并写合并标记()
     {
-        File.WriteAllText(BootPath, string.Empty);
+        var dir = TempDir();
+        var target = Path.Combine(dir, "AppSettings.json");
+        SettingsService.SaveSettingsTo(target, new AppSettings { AmapJsApiKey = "current-key" });
+        var legacy = Path.Combine(dir, "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings { AmapJsApiKey = "legacy-key" });
 
-        Assert.Null(SettingsService.GetCustomSettingsFile());
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
+
+        Assert.Equal("current-key", SettingsService.LoadSettingsFrom(target).AmapJsApiKey);
+        Assert.True(File.Exists(Path.Combine(dir, "settings.key-merged")));
     }
 
     [Fact]
-    public void GetCustomSettingsFile_引导文件只有空白行返回null()
+    public void ResolveSettingsFilePath_用户清空Key后不会再次回填()
     {
-        File.WriteAllText(BootPath, "   \n \t \n");
+        var dir = TempDir();
+        var target = Path.Combine(dir, "AppSettings.json");
+        var legacy = Path.Combine(dir, "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings { AmapJsApiKey = "legacy-key" });
+        SettingsService.SaveSettingsTo(target, new AppSettings());
 
-        Assert.Null(SettingsService.GetCustomSettingsFile());
+        // 首次启动：从旧配置补齐并落标记
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
+        Assert.Equal("legacy-key", SettingsService.LoadSettingsFrom(target).AmapJsApiKey);
+
+        // 用户主动清空后保存
+        var cleared = SettingsService.LoadSettingsFrom(target);
+        cleared.AmapJsApiKey = string.Empty;
+        SettingsService.SaveSettingsTo(target, cleared);
+
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
+
+        Assert.Equal(string.Empty, SettingsService.LoadSettingsFrom(target).AmapJsApiKey);
     }
 
     [Fact]
-    public void GetCustomSettingsFile_读取时去除首尾空白()
+    public void ResolveSettingsFilePath_新配置已有Key但缺安全密钥时只补安全密钥()
     {
-        var target = NewTempJson();
-        File.WriteAllText(BootPath, $"  {target}  \n");
+        var dir = TempDir();
+        var target = Path.Combine(dir, "AppSettings.json");
+        SettingsService.SaveSettingsTo(target, new AppSettings { AmapJsApiKey = "current-key" });
+        var legacy = Path.Combine(dir, "settings.json");
+        SettingsService.SaveSettingsTo(legacy, new AppSettings
+        {
+            AmapJsApiKey = "legacy-key",
+            AmapSecurityCode = "legacy-secret"
+        });
 
-        Assert.Equal(Path.GetFullPath(target), SettingsService.GetCustomSettingsFile());
-    }
+        SettingsService.ResolveSettingsFilePath(target, new[] { legacy });
 
-    // ==================== 配置文件路径解析 ====================
-
-    [Fact]
-    public void ResolveSettingsFilePath_无重定向时返回默认目录settings点json()
-    {
-        // 预先创建默认 settings.json，短路旧配置迁移，保证断言确定性
-        File.WriteAllText(DefaultSettingsJson, "{}");
-
-        Assert.Equal(DefaultSettingsJson, SettingsService.ResolveSettingsFilePath());
-    }
-
-    [Fact]
-    public void ResolveSettingsFilePath_有重定向时返回自定义路径()
-    {
-        var target = NewTempJson();
-        SettingsService.SetCustomSettingsFile(target);
-
-        Assert.Equal(Path.GetFullPath(target), SettingsService.ResolveSettingsFilePath());
-    }
-
-    [Fact]
-    public void ResolveSettingsFilePath_重定向目标不存在时回退默认()
-    {
-        File.WriteAllText(DefaultSettingsJson, "{}");
-        SettingsService.SetCustomSettingsFile(Path.Combine(TempDir(), "ghost.json"));
-
-        Assert.Equal(DefaultSettingsJson, SettingsService.ResolveSettingsFilePath());
-    }
-
-    [Fact]
-    public void 默认配置目录位于程序目录Data下与exe同盘携带()
-    {
-        // 测试环境无 install-config.json：默认目录应为 测试输出目录\Data（跟 exe 走，不在 C 盘 AppData）
-        Assert.EndsWith($"Data{Path.DirectorySeparatorChar}", DataDir + Path.DirectorySeparatorChar);
-        Assert.StartsWith(AppContext.BaseDirectory, DataDir, StringComparison.OrdinalIgnoreCase);
+        var loaded = SettingsService.LoadSettingsFrom(target);
+        Assert.Equal("current-key", loaded.AmapJsApiKey);
+        Assert.Equal("legacy-secret", loaded.AmapSecurityCode);
     }
 
     // ==================== 配置读写往返与容错 ====================
@@ -405,19 +378,4 @@ public sealed class SettingsServiceTests
         Assert.Equal("http://localhost:11434", result.OllamaUrl);
     }
 
-    // ==================== 单例 Save 事件 ====================
-
-    [Fact]
-    public void Save_保存成功后触发SettingsChanged事件()
-    {
-        // 该用例首次触碰单例：先重置引导文件，确保单例解析到默认路径
-        ResetBootFile();
-        var instance = SettingsService.Instance;
-        var fired = 0;
-        instance.SettingsChanged += (_, _) => fired++;
-
-        instance.Save();
-
-        Assert.Equal(1, fired);
-    }
 }

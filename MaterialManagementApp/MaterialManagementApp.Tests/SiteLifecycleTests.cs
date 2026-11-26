@@ -175,6 +175,20 @@ public sealed class SiteLifecycleTests : IDisposable
         Assert.Equal("仓库", valid[1].Name);
     }
 
+    [Fact]
+    public void BuildFixedPoints_SkipsCoordinatesWithZeroLongitudeOrLatitude()
+    {
+        var points = SiteProgressService.BuildFixedPoints(new AppSettings
+        {
+            ProjectDeptLng = "0",
+            ProjectDeptLat = "23.1",
+            WarehouseLng = "113.5",
+            WarehouseLat = "0"
+        });
+
+        Assert.Empty(points);
+    }
+
     /// <summary>插入一条已定位工点记录。</summary>
     private void InsertSite(string siteName, string date, double lng, double lat)
     {
@@ -190,5 +204,48 @@ public sealed class SiteLifecycleTests : IDisposable
             LastShotAt = $"{date} 09:00",
             SourceFilePath = $"{siteName}.jpg"
         });
+    }
+}
+
+public sealed class GeoCoordinateTests
+{
+    [Theory]
+    [InlineData("116.397428,39.90923", 116.397428, 39.90923)]
+    [InlineData(" 116.397428，39.90923 ", 116.397428, 39.90923)]
+    [InlineData("116.397428、39.90923", 116.397428, 39.90923)]
+    [InlineData("116.397428;39.90923", 116.397428, 39.90923)]
+    [InlineData("116.397428\t39.90923", 116.397428, 39.90923)]
+    [InlineData("116.397428  39.90923", 116.397428, 39.90923)]
+    [InlineData("116.397428°E,39.90923°N", 116.397428, 39.90923)]
+    public void TryParseCombined_接受高德坐标及常见分隔符(string text, double expectedLng, double expectedLat)
+    {
+        var valid = Common.GeoCoordinate.TryParseCombined(text, out var lng, out var lat, out var error);
+
+        Assert.True(valid, error);
+        Assert.Equal(expectedLng, lng, 6);
+        Assert.Equal(expectedLat, lat, 6);
+        Assert.Equal(string.Empty, error);
+    }
+
+    [Theory]
+    [InlineData("116.397428", "缺少纬度")]
+    [InlineData("abc", "格式应为 经度,纬度")]
+    [InlineData("116.397428,39.90923,1", "格式应为 经度,纬度")]
+    [InlineData("181,39.90923", "经度超出范围")]
+    [InlineData("116.397428,91", "纬度超出范围")]
+    public void TryParseCombined_非法输入返回具体原因(string text, string expectedError)
+    {
+        var valid = Common.GeoCoordinate.TryParseCombined(text, out _, out _, out var error);
+
+        Assert.False(valid);
+        Assert.Contains(expectedError, error);
+    }
+
+    [Fact]
+    public void FormatPair_旧配置自动拼接且零坐标显示为空()
+    {
+        Assert.Equal("116.397428,39.90923", Common.GeoCoordinate.FormatPair(" 116.397428 ", " 39.90923 "));
+        Assert.Equal(string.Empty, Common.GeoCoordinate.FormatPair("0", "0"));
+        Assert.Equal(string.Empty, Common.GeoCoordinate.FormatPair(string.Empty, string.Empty));
     }
 }

@@ -246,6 +246,7 @@ namespace MaterialManagementApp
 
             // 生命周期日志带版本号：线上排障时可直接对齐日志与安装包版本
             _logger.LogInformation("应用启动中，版本=v{Version}。", typeof(App).Assembly.GetName().Version);
+            _logger.LogInformation("当前配置文件路径：{SettingsPath}。", SettingsService.Instance.SettingsFilePath);
 
             // 数据库版本迁移闸门：旧库搬迁、版本校验、迁移前自动备份、增量迁移。
             // 失败时弹窗拦截，禁止进入主界面，防止迁移不完整的库被业务代码继续写入造成数据损坏。

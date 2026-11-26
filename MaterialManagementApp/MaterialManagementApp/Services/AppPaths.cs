@@ -31,6 +31,13 @@ public static class AppPaths
     public static string LocalAppDataRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MaterialSystem");
 
+    /// <summary>用户配置目录：%LOCALAPPDATA%\MaterialManagementApp。</summary>
+    public static string UserSettingsDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MaterialManagementApp");
+
+    /// <summary>用户配置文件：%LOCALAPPDATA%\MaterialManagementApp\AppSettings.json。</summary>
+    public static string UserSettingsFilePath => Path.Combine(UserSettingsDirectory, "AppSettings.json");
+
     /// <summary>
     /// 程序目录下的数据目录：主程序 exe 所在目录\Data。
     /// 数据库默认存放于此，软件拷到哪数据就跟到哪（绿色便携）。

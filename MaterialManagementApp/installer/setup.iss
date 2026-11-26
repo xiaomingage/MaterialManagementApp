@@ -61,8 +61,8 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 ; 用户数据：数据库（.db + WAL/SHM 附属文件）、运行时日志、临时锁文件。
 ; 升级覆盖安装绝不会覆盖用户数据库；数据库随软件放在 {app}\Data（便携），
 ; 历史安装版仍在 install-config.json 指定的数据目录，两者均不随安装包分发或覆盖。
-; settings.json 是程序首次运行必需的默认配置，**不排除**，安装时作为初始模板。
-Source: "{#PublishDir}\*"; Excludes: "**\*.db **\*.db-wal **\*.db-shm **\*.db-journal **\Logs\** **\*.log **\*.trn"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 用户配置由程序首次运行时在 %LOCALAPPDATA%\MaterialManagementApp 创建，旧配置模板不随包分发。
+Source: "{#PublishDir}\*"; Excludes: "**\*.db,**\*.db-wal,**\*.db-shm,**\*.db-journal,**\Logs\**,**\*.log,**\*.trn,**\settings.json,**\AppSettings.json,**\settings.path"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; 桌面快捷方式

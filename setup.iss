@@ -23,16 +23,16 @@
 [Setup]
 ; AppId 一旦发布就不要再改，否则升级会被当成全新安装，旧版本不会自动卸载
 AppId={{8F3C2A6E-4D71-4B9A-9E5C-2F7A1D8B6C04}
-AppName=MaterialManagementApp
+AppName=物资管理系统
 AppVersion=1.11.0
-AppVerName=MaterialManagementApp 1.11.0
+AppVerName=物资管理系统 1.11.0
 AppPublisher=MaterialManagementApp
 VersionInfoVersion=1.11.0.0
 VersionInfoDescription=工程项目物资管理系统
 
 ; 最低权限下 {autopf} 自动映射到当前用户可写目录，避免 UAC 提权
 DefaultDirName={autopf}\MaterialManagementApp
-DefaultGroupName=MaterialManagementApp
+DefaultGroupName=物资管理系统
 UninstallDisplayIcon={app}\MaterialManagementApp.exe
 
 ; 允许用户自定义安装位置（用户明确要求）
@@ -63,19 +63,19 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 ; 打包 dotnet publish 的输出目录（自包含多文件，不含单文件 exe）
 ; 注意：Data 目录属于用户数据，不在 Source 内，不会被安装包覆盖
-Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "publish\*"; Excludes: "**\settings.json,**\AppSettings.json,**\settings.path"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 ; 安装时创建 Data 目录并授予当前用户写权限，保证首次运行建库不报错
 Name: "{app}\Data"; Permissions: users-modify
 
 [Icons]
-Name: "{group}\MaterialManagementApp"; Filename: "{app}\MaterialManagementApp.exe"
-Name: "{group}\卸载 MaterialManagementApp"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\MaterialManagementApp"; Filename: "{app}\MaterialManagementApp.exe"; Tasks: desktopicon
+Name: "{group}\物资管理系统"; Filename: "{app}\MaterialManagementApp.exe"
+Name: "{group}\卸载 物资管理系统"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\物资管理系统"; Filename: "{app}\MaterialManagementApp.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\MaterialManagementApp.exe"; Description: "启动 MaterialManagementApp"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MaterialManagementApp.exe"; Description: "启动 物资管理系统"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var

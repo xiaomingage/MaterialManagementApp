@@ -41,6 +41,17 @@ public sealed partial class SettingsPage : Page
         // 页面加载后无需任何代码干预（模板内控件不再生成页面字段）
     }
 
+    /// <summary>经纬度输入框失焦后立即解析并显示结果。</summary>
+    private void OnCoordinateTextBoxLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is TextBox textBox)
+        {
+            ViewModel.UpdateCoordinateFeedback(
+                textBox.Text,
+                string.Equals(textBox.Tag as string, "ProjectDept", StringComparison.Ordinal));
+        }
+    }
+
     /// <summary>预设强调色色块点击：直接写入强调色并即时预览。</summary>
     /// <param name="sender">被点击的色块按钮，Tag 为十六进制颜色字符串。</param>
     /// <param name="e">路由事件参数。</param>
@@ -408,7 +419,7 @@ public sealed partial class SettingsPage : Page
             return;
         }
 
-        // /select 参数会打开文件夹并高亮选中文件，用户可直接看到 settings.json
+        // /select 参数会打开文件夹并高亮选中文件，用户可直接看到 AppSettings.json
         System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\"");
     }
 

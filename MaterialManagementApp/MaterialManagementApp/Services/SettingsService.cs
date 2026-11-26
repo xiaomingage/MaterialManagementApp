@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -7,8 +8,8 @@ using MaterialManagementApp.Models;
 namespace MaterialManagementApp.Services;
 
 /// <summary>
-/// 应用配置服务（单例）。配置以 JSON 形式存放于本地应用数据目录，与 app.db 同级，
-/// 便于用户直接查看与随数据库一起备份。
+/// 应用配置服务（单例）。配置固定存放于 %LOCALAPPDATA%\MaterialManagementApp\AppSettings.json，
+/// 与安装目录和数据库分离，覆盖安装不会替换用户配置。
 /// 选用 JSON 而非数据库表：配置是单例键值对，用表存需额外的表结构与反序列化代码，收益为零。
 /// </summary>
 public sealed class SettingsService
@@ -33,7 +34,7 @@ public sealed class SettingsService
     /// <summary>当前生效的设置对象；读取失败时为默认实例，永不为 null。</summary>
     public AppSettings Settings { get; private set; }
 
-    /// <summary>settings.json 的完整路径，供设置页展示。</summary>
+    /// <summary>当前用户配置文件的完整路径，供设置页展示。</summary>
     public string SettingsFilePath { get; }
 
     /// <summary>
@@ -49,33 +50,24 @@ public sealed class SettingsService
         ? Path.Combine(dataRoot, "Data")
         : AppPaths.ProgramDataDir;
 
-    /// <summary>引导文件名：内容为一行自定义 settings.json 的完整路径；文件缺失或为空表示使用默认位置。</summary>
-    private const string SettingsRedirectFileName = "settings.path";
+    /// <summary>旧版默认配置目录，仅用于首次启动迁移。</summary>
+    private static string LegacyDefaultSettingsDirectory => AppPaths.DataRoot ?? AppPaths.ProgramDataDir;
 
-    /// <summary>
-    /// settings.json 的默认存放目录：安装器指定的数据目录（历史安装留下的 install-config.json），
-    /// 未配置时为程序目录\Data——配置跟 exe 走，拷贝整个程序文件夹即可带着配置搬家，不再落到 C 盘。
-    /// </summary>
-    public static string DefaultSettingsDirectory => AppPaths.DataRoot ?? AppPaths.ProgramDataDir;
+    /// <summary>旧版配置引导文件，仅在迁移时读取，不再写入或作为生效路径。</summary>
+    private static string LegacySettingsRedirectFilePath =>
+        Path.Combine(LegacyDefaultSettingsDirectory, "settings.path");
 
-    /// <summary>引导文件（settings.path）的完整路径，位于默认配置目录内。</summary>
-    public static string SettingsRedirectFilePath => Path.Combine(DefaultSettingsDirectory, SettingsRedirectFileName);
-
-    /// <summary>
-    /// 读取引导文件中记录的自定义 settings.json 路径。
-    /// 引导文件缺失、内容为空或指向的文件已不存在时返回 null（使用默认位置）。
-    /// </summary>
-    public static string? GetCustomSettingsFile()
+    /// <summary>读取旧版 settings.path 指向的配置文件，供一次性迁移使用。</summary>
+    private static string? GetLegacyCustomSettingsFile()
     {
         try
         {
-            var boot = SettingsRedirectFilePath;
-            if (!File.Exists(boot))
+            if (!File.Exists(LegacySettingsRedirectFilePath))
             {
                 return null;
             }
 
-            var line = File.ReadAllLines(boot)
+            var line = File.ReadAllLines(LegacySettingsRedirectFilePath)
                 .Select(l => l.Trim())
                 .FirstOrDefault(l => l.Length > 0);
             if (string.IsNullOrWhiteSpace(line))
@@ -88,33 +80,9 @@ public sealed class SettingsService
         }
         catch (Exception ex)
         {
-            // 引导文件读不出来不能阻断启动：回退默认位置
-            System.Diagnostics.Debug.WriteLine($"[SettingsService] 读取配置引导文件失败：{ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[SettingsService] 读取旧配置引导文件失败：{ex.Message}");
             return null;
         }
-    }
-
-    /// <summary>
-    /// 写入或清除配置文件重定向（引导文件）。供设置页「选择配置文件」调用，
-    /// 立即生效——下次启动按引导文件加载；path 为空表示恢复默认位置（删除引导文件）。
-    /// </summary>
-    /// <exception cref="IOException">目录不可写时抛出，由调用方提示用户。</exception>
-    public static void SetCustomSettingsFile(string? path)
-    {
-        var boot = SettingsRedirectFilePath;
-        Directory.CreateDirectory(DefaultSettingsDirectory);
-
-        var trimmed = (path ?? string.Empty).Trim();
-        if (trimmed.Length == 0)
-        {
-            if (File.Exists(boot))
-            {
-                File.Delete(boot);
-            }
-            return;
-        }
-
-        File.WriteAllText(boot, Path.GetFullPath(trimmed));
     }
 
     /// <summary>
@@ -330,26 +298,160 @@ public sealed class SettingsService
         return settings;
     }
 
-    /// <summary>
-    /// 解析配置文件路径：优先按引导文件（settings.path）重定向到用户在设置页选择的
-    /// settings.json；未重定向时使用默认目录（安装器数据目录或程序目录\Data）下的 settings.json，
-    /// 与数据库同级，便于随数据一起备份；首次切换目录时自动迁移旧位置配置。
-    /// </summary>
-    /// <returns>settings.json 的绝对路径。</returns>
+    /// <summary>解析固定用户配置路径；新配置不存在时迁移旧配置，已存在时只补齐缺失的高德凭证。</summary>
     internal static string ResolveSettingsFilePath()
     {
-        var directory = DefaultSettingsDirectory;
-        Directory.CreateDirectory(directory);
-
-        var target = GetCustomSettingsFile() ?? Path.Combine(directory, "settings.json");
-        TryMigrateLegacySettings(target);
-        return target;
+        return ResolveSettingsFilePath(AppPaths.UserSettingsFilePath, GetLegacySettingsCandidates());
     }
 
+    /// <summary>迁移旧配置或创建默认配置；新配置已存在时只补齐空的高德凭证。独立路径参数供单元测试隔离真实用户目录。</summary>
+    internal static string ResolveSettingsFilePath(string targetPath, IEnumerable<string?> legacyCandidates)
+    {
+        var directory = Path.GetDirectoryName(targetPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        if (File.Exists(targetPath))
+        {
+            TryMergeMissingAmapCredentials(targetPath, legacyCandidates);
+        }
+        else
+        {
+            TryMigrateLegacySettings(targetPath, legacyCandidates);
+
+            if (!File.Exists(targetPath))
+            {
+                SaveSettingsTo(targetPath, new AppSettings());
+            }
+        }
+
+        return targetPath;
+    }
+
+    /// <summary>一次性合并标记：存在表示已评估过高德凭证，不再从旧配置回填。</summary>
+    private static string MergeMarkerPath(string targetPath) =>
+        Path.Combine(Path.GetDirectoryName(targetPath) ?? string.Empty, "settings.key-merged");
+
     /// <summary>
-    /// 解析改造前使用的配置目录：WinUI 应用数据目录，不可用时回退 %LOCALAPPDATA%\MaterialManagementApp。
+    /// 新配置已存在时补齐缺失的高德凭证：只在新文件中 Key / 安全密钥为空、旧配置有值时写入，
+    /// 绝不覆盖已有值，也不合并其他设置；成功后写标记文件，避免用户主动清空 Key 后被旧配置回填。
     /// </summary>
-    /// <returns>配置目录的绝对路径。</returns>
+    private static void TryMergeMissingAmapCredentials(string targetPath, IEnumerable<string?> legacyCandidates)
+    {
+        var markerPath = MergeMarkerPath(targetPath);
+        if (File.Exists(markerPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var current = LoadSettingsFrom(targetPath);
+            if (!string.IsNullOrWhiteSpace(current.AmapJsApiKey)
+                && !string.IsNullOrWhiteSpace(current.AmapSecurityCode))
+            {
+                WriteMergeMarker(markerPath);
+                return;
+            }
+
+            var merged = false;
+            foreach (var candidate in legacyCandidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                var legacy = Path.GetFullPath(candidate);
+                if (string.Equals(legacy, targetPath, StringComparison.OrdinalIgnoreCase) || !File.Exists(legacy))
+                {
+                    continue;
+                }
+
+                AppSettings legacySettings;
+                try
+                {
+                    legacySettings = LoadSettingsFrom(legacy);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SettingsService] 读取旧配置失败，跳过：{legacy}，{ex.Message}");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(current.AmapJsApiKey)
+                    && !string.IsNullOrWhiteSpace(legacySettings.AmapJsApiKey))
+                {
+                    current.AmapJsApiKey = legacySettings.AmapJsApiKey;
+                    merged = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(current.AmapSecurityCode)
+                    && !string.IsNullOrWhiteSpace(legacySettings.AmapSecurityCode))
+                {
+                    current.AmapSecurityCode = legacySettings.AmapSecurityCode;
+                    merged = true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(current.AmapJsApiKey)
+                    && !string.IsNullOrWhiteSpace(current.AmapSecurityCode))
+                {
+                    break;
+                }
+            }
+
+            if (merged)
+            {
+                SaveSettingsTo(targetPath, current);
+                System.Diagnostics.Debug.WriteLine("[SettingsService] 已从旧配置补齐缺失的高德凭证。");
+            }
+
+            // 已有 Key 时也落标记：之后用户主动清空 Key 不再回填
+            if (merged || !string.IsNullOrWhiteSpace(current.AmapJsApiKey))
+            {
+                WriteMergeMarker(markerPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 目标文件损坏或不可写时不阻断启动，留给 Load() 的默认值兜底
+            System.Diagnostics.Debug.WriteLine($"[SettingsService] 合并旧配置高德凭证失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>写入合并标记；失败只影响下次重复检查，不影响启动。</summary>
+    private static void WriteMergeMarker(string markerPath)
+    {
+        try
+        {
+            File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SettingsService] 写入合并标记失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>旧版配置候选，优先迁移升级前实际生效的自定义配置。</summary>
+    private static IEnumerable<string?> GetLegacySettingsCandidates()
+    {
+        var legacyDefaultDirectory = LegacyDefaultSettingsDirectory;
+        var legacyAppDataDirectory = ResolveLegacySettingsDirectory();
+        return new[]
+        {
+            GetLegacyCustomSettingsFile(),
+            Path.Combine(legacyDefaultDirectory, "settings.json"),
+            Path.Combine(legacyDefaultDirectory, "AppSettings.json"),
+            Path.Combine(AppContext.BaseDirectory, "settings.json"),
+            Path.Combine(AppContext.BaseDirectory, "AppSettings.json"),
+            Path.Combine(legacyAppDataDirectory, "settings.json"),
+            Path.Combine(AppPaths.UserSettingsDirectory, "settings.json")
+        };
+    }
+
+    /// <summary>解析更早期使用的 WinUI 应用数据目录，仅用于配置迁移。</summary>
     private static string ResolveLegacySettingsDirectory()
     {
         try
@@ -362,40 +464,25 @@ public sealed class SettingsService
         }
         catch (Exception ex)
         {
-            // 非打包 / 无包身份等场景可能不可用，回退保证配置仍可读写
-            System.Diagnostics.Debug.WriteLine($"[SettingsService] 应用数据目录不可用，回退 LocalApplicationData：{ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[SettingsService] 旧应用数据目录不可用，回退 LocalApplicationData：{ex.Message}");
         }
 
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MaterialManagementApp");
+        return AppPaths.UserSettingsDirectory;
     }
 
-    /// <summary>
-    /// 首次切换到安装版数据目录时，把旧位置已有的 settings.json 复制过来，
-    /// 避免升级后此前配置的预警阈值、默认工程名等凭空消失。仅在目标文件不存在时执行一次。
-    /// </summary>
-    /// <param name="targetPath">新的配置文件完整路径。</param>
-    private static void TryMigrateLegacySettings(string targetPath)
+    /// <summary>把首个存在的旧配置复制到用户目录，源文件保持不变。</summary>
+    private static void TryMigrateLegacySettings(string targetPath, IEnumerable<string?> legacyCandidates)
     {
         try
         {
-            if (File.Exists(targetPath))
+            foreach (var candidate in legacyCandidates)
             {
-                return;
-            }
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
 
-            var candidates = new[]
-            {
-                Path.Combine(ResolveLegacySettingsDirectory(), "settings.json"),
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "MaterialManagementApp",
-                    "settings.json"),
-            };
-
-            foreach (var legacy in candidates)
-            {
+                var legacy = Path.GetFullPath(candidate);
                 if (!string.Equals(legacy, targetPath, StringComparison.OrdinalIgnoreCase) && File.Exists(legacy))
                 {
                     File.Copy(legacy, targetPath, overwrite: false);
@@ -406,7 +493,6 @@ public sealed class SettingsService
         }
         catch (Exception ex)
         {
-            // 迁移失败不阻断启动：用户仍可在设置页重新填写
             System.Diagnostics.Debug.WriteLine($"[SettingsService] 迁移旧配置失败：{ex.Message}");
         }
     }

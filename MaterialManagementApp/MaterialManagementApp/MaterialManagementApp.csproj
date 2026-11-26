@@ -23,6 +23,9 @@
     <SelfContained>true</SelfContained>
     <!-- 应用版本号，与安装脚本保持一致 -->
     <Version>1.11.0</Version>
+    <AssemblyTitle>物资管理系统</AssemblyTitle>
+    <Product>物资管理系统</Product>
+    <Description>工程项目物资管理系统</Description>
     <!-- 应用图标：exe、任务栏、桌面快捷方式统一使用 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
